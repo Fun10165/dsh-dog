@@ -392,3 +392,72 @@ describe('parent-relation semantics', () => {
     expect(run.rootState).toBe('needs_replan')
   })
 })
+
+describe('trusted Agent bindings', () => {
+  it('persists concurrent descendant bindings without losing verifier results', async () => {
+    const root = await temporaryRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }])
+    const candidate = graph({
+      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
+      leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+    await dog.create(candidate)
+    const run = await dog.run('demo', { invocation: { callId: 'run-call', agentSessionId: 'owner-session' } })
+
+    await dog.bindAgent({
+      runId: run.runId,
+      goalId: 'root',
+      role: 'orchestrator',
+      sessionId: 'owner-session',
+    })
+    await Promise.all([
+      dog.bindAgent({ runId: run.runId, goalId: 'leaf', role: 'executor', sessionId: 'child-a', parentSessionId: 'owner-session' }),
+      dog.bindAgent({ runId: run.runId, goalId: 'leaf', role: 'verifier', sessionId: 'child-b', parentSessionId: 'owner-session' }),
+    ])
+    await dog.bindAgent({ runId: run.runId, goalId: 'leaf', role: 'reviewer', sessionId: 'child-a', parentSessionId: 'owner-session' })
+
+    const status = await dog.status(run.runId)
+    expect(status.rootState).toBe('success')
+    expect(status.goals.leaf?.verification?.passed).toBe(true)
+    expect(status.goals.root?.agentSessions).toMatchObject([
+      { sessionId: 'owner-session', role: 'orchestrator' },
+    ])
+    expect(status.goals.leaf?.agentSessions).toHaveLength(2)
+    expect(status.goals.leaf?.agentSessions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sessionId: 'child-a', parentSessionId: 'owner-session', role: 'reviewer' }),
+      expect.objectContaining({ sessionId: 'child-b', parentSessionId: 'owner-session', role: 'verifier' }),
+    ]))
+
+    await expect(dog.bindAgent({
+      runId: run.runId,
+      goalId: 'leaf',
+      role: 'executor',
+      sessionId: 'rogue-child',
+      parentSessionId: 'unrelated-session',
+    })).rejects.toThrow('is not rooted in run')
+    await expect(dog.bindAgent({
+      runId: run.runId,
+      goalId: 'missing',
+      role: 'executor',
+      sessionId: 'owner-session',
+    })).rejects.toThrow('has no goal missing')
+  })
+
+  it('refuses Agent bindings when the run has no trusted invoking session', async () => {
+    const root = await temporaryRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }])
+    await dog.create(graph({
+      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
+      leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }]))
+    const run = await dog.run('demo')
+    await expect(dog.bindAgent({
+      runId: run.runId,
+      goalId: 'root',
+      role: 'orchestrator',
+      sessionId: 'untrusted-session',
+    })).rejects.toThrow('has no trusted invocation Agent session')
+  })
+})

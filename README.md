@@ -29,6 +29,8 @@ The bundled profile patch registers the plugin with no artifact access. The prof
 
 The plugin exposes `dog_validate`, `dog_create`, `dog_run`, and `dog_status`. A graph may name `deck`; it cannot supply or override the filesystem path. `dog_create` captures immutable bytes, and `dog_run` verifies those bytes rather than the later live file.
 
+In the web profile, the bundle adds a `DoG Graph` launcher through DSH's `shell.overlay` slot. The read-only debugger polls `GET /dog/api/snapshot` and shows immutable graph revisions, run history, containment/dependency edges, failure propagation, and verifier evidence without exposing artifact bytes. Start it with `dsh --profile web`; graph creation and execution still use the model-facing tools above.
+
 An end-to-end loader smoke test uses the headless profile after configuration:
 
 ```sh

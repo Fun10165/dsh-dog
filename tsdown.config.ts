@@ -1,6 +1,6 @@
 import type { UserConfig } from 'tsdown'
 
-export default {
+const node: UserConfig = {
   entry: {
     index: 'src/index.ts',
     core: 'src/core.ts',
@@ -8,7 +8,7 @@ export default {
   outDir: 'lib',
   format: ['esm'],
   platform: 'node',
-  target: 'es2022',
+  target: 'es2024',
   fixedExtension: false,
   dts: true,
   clean: true,
@@ -20,4 +20,25 @@ export default {
       '@deepseek-ai/schemastery',
     ],
   },
-} satisfies UserConfig
+}
+
+const client: UserConfig = {
+  name: '@dsh-external/dsh-dog/client',
+  entry: { client: 'src/client/index.tsx' },
+  outDir: 'lib',
+  format: 'cjs',
+  platform: 'browser',
+  target: 'es2022',
+  dts: false,
+  sourcemap: true,
+  clean: false,
+  deps: { neverBundle: ['react', 'react/jsx-runtime'] },
+  outputOptions: {
+    entryFileNames: 'client.js',
+    banner: 'window.__ModuleLoader__.load({ id: "@dsh-external/dsh-dog", factory: (require) => {',
+    footer: 'return module.exports; } });',
+    intro: 'var module = { exports: {} }; var exports = module.exports;',
+  },
+}
+
+export default [node, client] satisfies UserConfig[]

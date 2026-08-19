@@ -154,10 +154,70 @@ export interface VerificationRecord {
   readonly verifiedAt: string
 }
 
+export type GoalRuntimeEventKind =
+  | 'goal_started'
+  | 'dependency_blocked'
+  | 'verifier_started'
+  | 'verifier_passed'
+  | 'verifier_failed'
+  | 'composite_evaluated'
+  | 'goal_error'
+  | 'goal_settled'
+
+export type GoalRuntimeStage = 'scheduling' | 'verification' | 'composition'
+
+export interface GoalRuntimeError {
+  readonly kind: 'acceptance_plan_missing' | 'completion_expression_missing' | 'verification_error'
+  readonly stage: GoalRuntimeStage
+  readonly message: string
+}
+
+export interface GoalRuntimeVerifier {
+  readonly id: string
+  readonly version: string
+  readonly artifactId: string
+}
+
+/** One append-only diagnostic event. It is operational context, never verifier evidence. */
+export interface GoalRuntimeEvent {
+  readonly schemaVersion: '0.1'
+  readonly runId: string
+  readonly graphDigest: string
+  readonly goalId: GoalId
+  readonly sequence: number
+  readonly attempt: number
+  readonly kind: GoalRuntimeEventKind
+  readonly at: string
+  readonly state?: GoalState
+  readonly reason?: string
+  readonly verifier?: GoalRuntimeVerifier
+  readonly error?: GoalRuntimeError
+  readonly durationMs?: number
+}
+
+export type GoalAgentRole = 'orchestrator' | 'executor' | 'verifier' | 'reviewer'
+
+/** Trusted session identity captured when an Agent binds itself to one goal. */
+export interface GoalAgentSessionRef {
+  readonly sessionId: string
+  readonly parentSessionId?: string
+  readonly role: GoalAgentRole
+  readonly boundAt: string
+}
+
+/** Host-derived identity for the DSH tool call that started a run. */
+export interface RunInvocationContext {
+  readonly callId: string
+  readonly agentSessionId?: string
+  readonly parentSessionId?: string
+  readonly invokedAt: string
+}
+
 export interface GoalResult {
   readonly state: GoalState
   readonly reason?: string
   readonly verification?: VerificationRecord
+  readonly agentSessions?: readonly GoalAgentSessionRef[]
 }
 
 export type RootTerminalState =
@@ -180,9 +240,27 @@ export interface DogRun {
   readonly graphDigest: string
   readonly state: 'created' | 'running' | 'completed'
   readonly rootState?: RootTerminalState
+  readonly invocation?: RunInvocationContext
+  readonly runtimeWarning?: string
   readonly goals: Readonly<Record<GoalId, GoalResult>>
   readonly createdAt: string
   readonly updatedAt: string
+}
+
+/** Lazy, per-goal debugger payload. Raw session transcripts and artifact bytes are deliberately excluded. */
+export interface GoalRuntimeTrace {
+  readonly schemaVersion: '0.1'
+  readonly runId: string
+  readonly graphId: string
+  readonly graphDigest: string
+  readonly runState: DogRun['state']
+  readonly rootState?: RootTerminalState
+  readonly goalId: GoalId
+  readonly result: GoalResult
+  readonly invocation?: RunInvocationContext
+  readonly runtimeWarning?: string
+  readonly events: readonly GoalRuntimeEvent[]
+  readonly truncated: boolean
 }
 
 export interface GraphValidationReport {

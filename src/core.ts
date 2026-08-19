@@ -11,6 +11,11 @@ import type {
   DogConfig,
   DogGraphInput,
   DogRun,
+  GoalRuntimeError,
+  GoalRuntimeEvent,
+  GoalState,
+  GoalAgentRole,
+  GoalAgentSessionRef,
   GoalResult,
   GraphValidationReport,
   JsonValue,
@@ -31,6 +36,40 @@ export interface DogEngineOptions {
   readonly now?: () => Date
   readonly nextRunId?: () => string
 }
+
+export interface DogRunOptions {
+  readonly invocation?: {
+    readonly callId: string
+    readonly agentSessionId?: string
+    readonly parentSessionId?: string
+  }
+}
+
+export interface DogBindAgentOptions {
+  readonly runId: string
+  readonly goalId: string
+  readonly role: GoalAgentRole
+  readonly sessionId: string
+  readonly parentSessionId?: string
+}
+
+export interface DogAgentDelegationOptions {
+  readonly runId: string
+  readonly goalId: string
+  readonly parentSessionId: string
+}
+
+
+interface RuntimeEventDetails {
+  readonly at?: string
+  readonly state?: GoalState
+  readonly reason?: string
+  readonly verifier?: GoalRuntimeEvent['verifier']
+  readonly error?: GoalRuntimeError
+  readonly durationMs?: number
+}
+
+const GOAL_AGENT_ROLES = new Set<GoalAgentRole>(['orchestrator', 'executor', 'verifier', 'reviewer'])
 
 /** Verification-first DoG service used by the DSH tools and tests. */
 export class DogEngine {
@@ -106,11 +145,23 @@ export class DogEngine {
     return compiled
   }
 
-  /** Run every trusted verifier and recompute all parents in dependency-safe postorder. */
-  async run(graphId: string): Promise<DogRun> {
+  /** Run every trusted verifier, persist per-goal runtime context, and recompute all parents. */
+  async run(graphId: string, options: DogRunOptions = {}): Promise<DogRun> {
     const compiled = await this.repository.loadGraph(graphId)
     const runId = this.nextRunId()
     const createdAt = this.now().toISOString()
+    const invocation = options.invocation === undefined
+      ? undefined
+      : {
+          callId: requireContextId(options.invocation.callId, 'invocation callId'),
+          ...(options.invocation.agentSessionId === undefined ? {} : {
+            agentSessionId: requireContextId(options.invocation.agentSessionId, 'invocation agentSessionId'),
+          }),
+          ...(options.invocation.parentSessionId === undefined ? {} : {
+            parentSessionId: requireContextId(options.invocation.parentSessionId, 'invocation parentSessionId'),
+          }),
+          invokedAt: createdAt,
+        }
     const goals: Record<string, GoalResult> = Object.fromEntries(
       Object.keys(compiled.input.nodes).map(id => [id, { state: 'pending' as const }]),
     )
@@ -119,95 +170,182 @@ export class DogEngine {
       graphId: compiled.input.id,
       graphDigest: compiled.graphDigest,
       state: 'running',
+      ...(invocation === undefined ? {} : { invocation }),
       goals,
       createdAt,
       updatedAt: createdAt,
     }
     await this.repository.saveRun(run)
 
+    let eventSequence = 0
+    const appendRuntimeEvent = async (
+      goalId: string,
+      kind: GoalRuntimeEvent['kind'],
+      details: RuntimeEventDetails = {},
+    ): Promise<void> => {
+      const event: GoalRuntimeEvent = {
+        schemaVersion: '0.1',
+        runId,
+        graphDigest: compiled.graphDigest,
+        goalId,
+        sequence: eventSequence++,
+        attempt: 1,
+        kind,
+        at: details.at ?? this.now().toISOString(),
+        ...(details.state === undefined ? {} : { state: details.state }),
+        ...(details.reason === undefined ? {} : { reason: boundedMessage(details.reason) }),
+        ...(details.verifier === undefined ? {} : { verifier: details.verifier }),
+        ...(details.error === undefined ? {} : {
+          error: { ...details.error, message: boundedMessage(details.error.message) },
+        }),
+        ...(details.durationMs === undefined ? {} : { durationMs: details.durationMs }),
+      }
+      try {
+        await this.repository.appendRuntimeEvent(event)
+      } catch (error) {
+        if (run.runtimeWarning === undefined) {
+          run = { ...run, runtimeWarning: `runtime context write failed: ${boundedMessage(messageOf(error))}` }
+        }
+      }
+    }
+    const saveProgress = async (updatedAt: string): Promise<void> => {
+      run = { ...run, goals: { ...goals }, updatedAt }
+      await this.repository.saveRun(run)
+    }
+
     const dependencies = dependenciesBySource(compiled.input)
     const children = childrenByParent(compiled.input)
     const relations = relationsByParent(compiled.input)
-    for (const goalId of postorder(compiled.input)) {
+    const evaluateComposite = (goalId: string): GoalResult => {
       const node = compiled.input.nodes[goalId]
-      if (node === undefined) continue
-      const blockedDependency = (dependencies.get(goalId) ?? []).find(target => goals[target]?.state !== 'success')
-      if (blockedDependency !== undefined) {
-        goals[goalId] = {
-          state: dependencyNeedsHuman(goals[blockedDependency]) ? 'needs_human' : 'blocked',
-          reason: `dependency ${blockedDependency} did not succeed`,
-        }
-        continue
-      }
-      if (node.kind === 'leaf') {
-        const plan = compiled.acceptancePlans[goalId]
-        if (plan === undefined) {
-          goals[goalId] = { state: 'needs_human', reason: 'compiled acceptance plan is missing' }
-          continue
-        }
-        try {
-          const result = await verifyAcceptancePlan(plan, this.verifiers, this.repository)
-          const record: VerificationRecord = {
-            goalId,
-            runId,
-            graphDigest: compiled.graphDigest,
-            verifierId: plan.verifierId,
-            verifierVersion: plan.verifierVersion,
-            artifactId: plan.artifactId,
-            snapshotId: plan.snapshot.snapshotId,
-            passed: result.passed,
-            observation: result.observation,
-            verifiedAt: this.now().toISOString(),
-          }
-          await this.repository.appendVerification(record)
-          goals[goalId] = { state: result.passed ? 'success' : 'failure', verification: record }
-        } catch (error) {
-          goals[goalId] = { state: 'needs_human', reason: messageOf(error) }
-        }
-        continue
-      }
-
       const parentRelations = relations.get(goalId) ?? []
       const childIds = children.get(goalId) ?? []
       const values = relationTruthValues(parentRelations, goals)
-      if (node.completion === undefined) {
-        goals[goalId] = { state: 'needs_human', reason: 'validated composite lost its completion expression' }
-        continue
+      if (node?.completion === undefined) {
+        return { state: 'needs_human', reason: 'validated composite lost its completion expression' }
       }
       const requiredFailures = parentRelations.filter(edge => edge.required && relationTruth(edge, goals) === false)
       const fatalRequiredFailure = requiredFailures.find(edge => edge.failure === 'fatal')
       const requiredUnknown = parentRelations.find(edge => edge.required && relationTruth(edge, goals) === undefined)
       if (fatalRequiredFailure !== undefined) {
-        goals[goalId] = { state: 'failure', reason: `required non-tolerable child ${fatalRequiredFailure.child} failed` }
-        continue
+        return { state: 'failure', reason: `required non-tolerable child ${fatalRequiredFailure.child} failed` }
       }
       if (requiredUnknown !== undefined) {
-        goals[goalId] = relationNeedsHuman(requiredUnknown, goals)
+        return relationNeedsHuman(requiredUnknown, goals)
           ? { state: 'needs_human', reason: `required child relation ${requiredUnknown.child} requires human review` }
           : { state: 'blocked', reason: `required child ${requiredUnknown.child} is unresolved` }
-        continue
       }
       if (requiredFailures.length > 0) {
-        goals[goalId] = { state: 'partial', reason: `required child ${requiredFailures[0]?.child ?? 'unknown'} failed under a tolerable policy` }
-        continue
+        return { state: 'partial', reason: `required child ${requiredFailures[0]?.child ?? 'unknown'} failed under a tolerable policy` }
       }
       const completion = evaluateBoolExpr(node.completion, values)
-      if (completion === true) {
-        goals[goalId] = { state: 'success' }
-        continue
-      }
+      if (completion === true) return { state: 'success' }
       if (completion === 'unknown') {
         const humanChild = childIds.find(childId => dependencyNeedsHuman(goals[childId]))
-        goals[goalId] = humanChild === undefined
+        return humanChild === undefined
           ? { state: 'blocked', reason: 'one or more child outcomes are unresolved' }
           : { state: 'needs_human', reason: `child ${humanChild} requires human review` }
-        continue
       }
       const failedRelations = parentRelations.filter(edge => relationTruth(edge, goals) === false)
       const fatal = failedRelations.find(edge => edge.failure === 'fatal')
-      goals[goalId] = fatal === undefined
+      return fatal === undefined
         ? { state: 'partial', reason: 'completion rule is false, but every failed child relation is tolerable or optional' }
         : { state: 'failure', reason: `non-tolerable child ${fatal.child} failed` }
+    }
+
+    for (const goalId of postorder(compiled.input)) {
+      const node = compiled.input.nodes[goalId]
+      if (node === undefined) continue
+      const startedAt = this.now().toISOString()
+      goals[goalId] = { state: 'running' }
+      await appendRuntimeEvent(goalId, 'goal_started', { at: startedAt, state: 'running' })
+      await saveProgress(startedAt)
+
+      let result: GoalResult
+      const blockedDependency = (dependencies.get(goalId) ?? []).find(target => goals[target]?.state !== 'success')
+      if (blockedDependency !== undefined) {
+        const reason = `dependency ${blockedDependency} did not succeed`
+        result = {
+          state: dependencyNeedsHuman(goals[blockedDependency]) ? 'needs_human' : 'blocked',
+          reason,
+        }
+        await appendRuntimeEvent(goalId, 'dependency_blocked', { state: result.state, reason })
+      } else if (node.kind === 'leaf') {
+        const plan = compiled.acceptancePlans[goalId]
+        if (plan === undefined) {
+          const error: GoalRuntimeError = {
+            kind: 'acceptance_plan_missing',
+            stage: 'scheduling',
+            message: 'compiled acceptance plan is missing',
+          }
+          result = { state: 'needs_human', reason: error.message }
+          await appendRuntimeEvent(goalId, 'goal_error', { state: result.state, error })
+        } else {
+          const verifier = {
+            id: plan.verifierId,
+            version: plan.verifierVersion,
+            artifactId: plan.artifactId,
+          }
+          await appendRuntimeEvent(goalId, 'verifier_started', { state: 'running', verifier })
+          try {
+            const verified = await verifyAcceptancePlan(plan, this.verifiers, this.repository)
+            const record: VerificationRecord = {
+              goalId,
+              runId,
+              graphDigest: compiled.graphDigest,
+              verifierId: plan.verifierId,
+              verifierVersion: plan.verifierVersion,
+              artifactId: plan.artifactId,
+              snapshotId: plan.snapshot.snapshotId,
+              passed: verified.passed,
+              observation: verified.observation,
+              verifiedAt: this.now().toISOString(),
+            }
+            await this.repository.appendVerification(record)
+            result = { state: verified.passed ? 'success' : 'failure', verification: record }
+            await appendRuntimeEvent(goalId, verified.passed ? 'verifier_passed' : 'verifier_failed', {
+              state: result.state,
+              verifier,
+              ...(verified.passed ? {} : { reason: 'trusted verifier rejected the immutable artifact snapshot' }),
+            })
+          } catch (cause) {
+            const error: GoalRuntimeError = {
+              kind: 'verification_error',
+              stage: 'verification',
+              message: boundedMessage(messageOf(cause)),
+            }
+            result = { state: 'needs_human', reason: error.message }
+            await appendRuntimeEvent(goalId, 'goal_error', { state: result.state, verifier, error })
+          }
+        }
+      } else {
+        result = evaluateComposite(goalId)
+        if (node.completion === undefined) {
+          await appendRuntimeEvent(goalId, 'goal_error', {
+            state: result.state,
+            error: {
+              kind: 'completion_expression_missing',
+              stage: 'composition',
+              message: result.reason ?? 'validated composite lost its completion expression',
+            },
+          })
+        } else {
+          await appendRuntimeEvent(goalId, 'composite_evaluated', {
+            state: result.state,
+            ...(result.reason === undefined ? {} : { reason: result.reason }),
+          })
+        }
+      }
+
+      goals[goalId] = result
+      const settledAt = this.now().toISOString()
+      await appendRuntimeEvent(goalId, 'goal_settled', {
+        at: settledAt,
+        state: result.state,
+        ...(result.reason === undefined ? {} : { reason: result.reason }),
+        durationMs: elapsedMilliseconds(startedAt, settledAt),
+      })
+      await saveProgress(settledAt)
     }
 
     const rootResult = goals[compiled.input.root]
@@ -217,7 +355,7 @@ export class DogEngine {
       ...run,
       state: 'completed',
       rootState,
-      goals,
+      goals: { ...goals },
       updatedAt,
     }
     await this.repository.saveRun(run)
@@ -227,6 +365,64 @@ export class DogEngine {
   /** Load a persisted run for status reporting. */
   async status(runId: string): Promise<DogRun> {
     return this.repository.loadRun(runId)
+  }
+
+  /** Authorize a trusted run Agent to create a child before the host allocates that session. */
+  async assertAgentCanDelegate(options: DogAgentDelegationOptions): Promise<void> {
+    const runId = requireContextId(options.runId, 'runId')
+    const goalId = requireContextId(options.goalId, 'goalId')
+    const parentSessionId = requireContextId(options.parentSessionId, 'delegating Agent sessionId')
+    const run = await this.repository.loadRun(runId)
+    if (run.goals[goalId] === undefined) throw new Error(`run ${runId} has no goal ${goalId}`)
+    const ownerSessionId = run.invocation?.agentSessionId
+    if (ownerSessionId === undefined) throw new Error(`run ${runId} has no trusted invocation Agent session`)
+    const knownSessions = new Set<string>([ownerSessionId])
+    for (const goal of Object.values(run.goals)) {
+      for (const linked of goal.agentSessions ?? []) knownSessions.add(linked.sessionId)
+    }
+    if (!knownSessions.has(parentSessionId)) {
+      throw new Error(`Agent session ${parentSessionId} is not rooted in run ${runId}`)
+    }
+  }
+
+  /** Bind the trusted calling Agent session to one goal without accepting model-supplied session identity. */
+  async bindAgent(options: DogBindAgentOptions): Promise<{ readonly run: DogRun; readonly agent: GoalAgentSessionRef }> {
+    const runId = requireContextId(options.runId, 'runId')
+    const goalId = requireContextId(options.goalId, 'goalId')
+    const sessionId = requireContextId(options.sessionId, 'agent sessionId')
+    const parentSessionId = options.parentSessionId === undefined
+      ? undefined
+      : requireContextId(options.parentSessionId, 'agent parentSessionId')
+    if (!GOAL_AGENT_ROLES.has(options.role)) throw new Error(`unsupported goal Agent role ${String(options.role)}`)
+    const boundAt = this.now().toISOString()
+    let agent: GoalAgentSessionRef | undefined
+    const run = await this.repository.updateRun(runId, current => {
+      const result = current.goals[goalId]
+      if (result === undefined) throw new Error(`run ${runId} has no goal ${goalId}`)
+      const ownerSessionId = current.invocation?.agentSessionId
+      if (ownerSessionId === undefined) throw new Error(`run ${runId} has no trusted invocation Agent session`)
+      const knownSessions = new Set<string>([ownerSessionId])
+      for (const goal of Object.values(current.goals)) {
+        for (const linked of goal.agentSessions ?? []) knownSessions.add(linked.sessionId)
+      }
+      if (sessionId !== ownerSessionId && (parentSessionId === undefined || !knownSessions.has(parentSessionId))) {
+        throw new Error(`Agent session ${sessionId} is not rooted in run ${runId}`)
+      }
+      agent = {
+        sessionId,
+        ...(parentSessionId === undefined ? {} : { parentSessionId }),
+        role: options.role,
+        boundAt,
+      }
+      const agentSessions = [...(result.agentSessions ?? []).filter(linked => linked.sessionId !== sessionId), agent]
+      return {
+        ...current,
+        goals: { ...current.goals, [goalId]: { ...result, agentSessions } },
+        updatedAt: boundAt,
+      }
+    })
+    if (agent === undefined) throw new Error(`run ${runId} Agent binding did not commit`)
+    return { run, agent }
   }
 
   private parse(value: unknown): DogGraphInput {
@@ -407,4 +603,19 @@ function deepFreeze<T>(value: T): T {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function requireContextId(value: string, label: string): string {
+  if (value.length === 0 || value.length > 512) throw new Error(`${label} must contain 1-512 characters`)
+  return value
+}
+
+function boundedMessage(value: string): string {
+  const normalized = value.length === 0 ? 'unknown runtime error' : value
+  return normalized.length <= 512 ? normalized : `${normalized.slice(0, 509)}...`
+}
+
+function elapsedMilliseconds(startedAt: string, settledAt: string): number {
+  const elapsed = Date.parse(settledAt) - Date.parse(startedAt)
+  return Number.isSafeInteger(elapsed) && elapsed >= 0 ? elapsed : 0
 }

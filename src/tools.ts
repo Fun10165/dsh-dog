@@ -5,9 +5,21 @@ import { DogEngine } from './core.ts'
 import { isJsonValue } from './model.ts'
 import type { CompiledGraph, DogRun } from './model.ts'
 
+export interface DogAgentLauncher {
+  launch(input: {
+    readonly label: string
+    readonly prompt: string
+    readonly parent: unknown
+    readonly signal: AbortSignal
+  }): Promise<{ readonly sessionId: string }>
+  interrupt?(sessionId: string, parent: unknown): void | Promise<void>
+}
+
 export const DOG_VALIDATE_TOOL = 'dog_validate'
 export const DOG_CREATE_TOOL = 'dog_create'
 export const DOG_RUN_TOOL = 'dog_run'
+export const DOG_BIND_AGENT_TOOL = 'dog_bind_agent'
+export const DOG_DELEGATE_AGENT_TOOL = 'dog_delegate_agent'
 export const DOG_STATUS_TOOL = 'dog_status'
 
 const JSON_OUTPUT = {
@@ -54,9 +66,52 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
       output: JSON_OUTPUT,
       async execute(args, exec) {
         exec.signal.throwIfAborted()
-        const run = await engine.run(args.graphId)
+        const run = await engine.run(args.graphId, {
+          invocation: {
+            callId: String(exec.callId),
+            ...(exec.agent === undefined ? {} : { agentSessionId: String(exec.agent.id) }),
+            ...(exec.agent?.session.header.parentSession === undefined ? {} : {
+              parentSessionId: String(exec.agent.session.header.parentSession),
+            }),
+          },
+        })
         exec.signal.throwIfAborted()
         return jsonResult(runSummary(run))
+      },
+    }),
+    defineTool({
+      name: DOG_BIND_AGENT_TOOL,
+      description: 'Bind the current trusted DSH Agent session to one goal in an existing DoG run. Use dog_delegate_agent instead when creating a new worker that must remain directly interactive after its first turn. Session identity is captured from the tool execution context and cannot be supplied by the model.',
+      parameters: {
+        runId: { type: 'string', required: true, description: 'Run ID returned by dog_run.' },
+        goalId: { type: 'string', required: true, description: 'Goal ID this Agent is working on or verifying.' },
+        role: {
+          type: 'string',
+          required: true,
+          enum: ['orchestrator', 'executor', 'verifier', 'reviewer'] as const,
+          description: 'The Agent role for this goal.',
+        },
+      },
+      output: JSON_OUTPUT,
+      isConcurrencySafe: () => true,
+      async execute(args, exec) {
+        exec.signal.throwIfAborted()
+        if (exec.agent === undefined) throw new Error('dog_bind_agent requires a trusted DSH Agent execution context')
+        const binding = await engine.bindAgent({
+          runId: args.runId,
+          goalId: args.goalId,
+          role: args.role,
+          sessionId: String(exec.agent.id),
+          ...(exec.agent.session.header.parentSession === undefined ? {} : {
+            parentSessionId: String(exec.agent.session.header.parentSession),
+          }),
+        })
+        exec.signal.throwIfAborted()
+        return jsonResult({
+          runId: binding.run.runId,
+          goalId: args.goalId,
+          agent: binding.agent,
+        })
       },
     }),
     defineTool({
@@ -75,6 +130,67 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
       },
     }),
   ]
+}
+
+/** Build the DoG-aware continuable Agent launcher once the host subagent service is available. */
+export function createDogDelegateAgentTool(engine: DogEngine, launcher: DogAgentLauncher): ToolDefinition {
+  return defineTool({
+    name: DOG_DELEGATE_AGENT_TOOL,
+    description: 'Start a durable continuable DSH Agent for one DoG goal and bind its host-issued session identity to the run. The child remains directly interactive in the session UI after its first turn. Use this instead of a foreground or one-shot subagent for user-addressable DoG workers.',
+    parameters: {
+      runId: { type: 'string', required: true, description: 'Run ID returned by dog_run.' },
+      goalId: { type: 'string', required: true, description: 'Goal ID assigned to the new Agent.' },
+      role: {
+        type: 'string',
+        required: true,
+        enum: ['orchestrator', 'executor', 'verifier', 'reviewer'] as const,
+        description: 'The Agent role for this goal.',
+      },
+      label: { type: 'string', required: true, description: 'Short human-readable Agent label shown in the session tree.' },
+      prompt: { type: 'string', required: true, description: 'Complete first-turn assignment for the Agent.' },
+    },
+    output: JSON_OUTPUT,
+    async execute(args, exec) {
+      exec.signal.throwIfAborted()
+      if (exec.agent === undefined) throw new Error('dog_delegate_agent requires a trusted DSH Agent execution context')
+      const parentSessionId = String(exec.agent.id)
+      await engine.assertAgentCanDelegate({
+        runId: args.runId,
+        goalId: args.goalId,
+        parentSessionId,
+      })
+      exec.signal.throwIfAborted()
+      const child = await launcher.launch({
+        label: args.label,
+        prompt: args.prompt,
+        parent: exec.agent,
+        signal: exec.signal,
+      })
+      if (child.sessionId.length === 0) throw new Error('DoG Agent launcher returned an empty child session ID')
+      try {
+        const binding = await engine.bindAgent({
+          runId: args.runId,
+          goalId: args.goalId,
+          role: args.role,
+          sessionId: child.sessionId,
+          parentSessionId,
+        })
+        return jsonResult({
+          runId: binding.run.runId,
+          goalId: args.goalId,
+          lifecycle: 'continuable',
+          agent: binding.agent,
+        })
+      } catch (error) {
+        try {
+          await launcher.interrupt?.(child.sessionId, exec.agent)
+        } catch {
+          // Preserve the authoritative binding failure; interruption is only best-effort cleanup.
+        }
+        throw error
+      }
+    },
+  })
 }
 
 function compiledGraphSummary(compiled: CompiledGraph): JsonValue {
@@ -104,6 +220,9 @@ function runSummary(run: DogRun): JsonValue {
     goals: Object.fromEntries(Object.entries(run.goals).map(([goalId, result]) => [goalId, {
       state: result.state,
       ...result.reason === undefined ? {} : { reason: result.reason },
+      ...result.agentSessions === undefined ? {} : {
+        agentSessions: result.agentSessions.map(agent => ({ ...agent })),
+      },
       ...result.verification === undefined ? {} : {
         verification: {
           verifierId: result.verification.verifierId,

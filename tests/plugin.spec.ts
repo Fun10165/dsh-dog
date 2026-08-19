@@ -2,13 +2,24 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Config, apply, inject } from '../src/index.ts'
-import { DOG_CREATE_TOOL, DOG_RUN_TOOL, DOG_STATUS_TOOL, DOG_VALIDATE_TOOL } from '../src/tools.ts'
+import { DogEngine } from '../src/core.ts'
+import {
+  DOG_BIND_AGENT_TOOL,
+  DOG_CREATE_TOOL,
+  DOG_DELEGATE_AGENT_TOOL,
+  DOG_RUN_TOOL,
+  DOG_STATUS_TOOL,
+  DOG_VALIDATE_TOOL,
+  createDogDelegateAgentTool,
+} from '../src/tools.ts'
 import type { DogGraphInput } from '../src/model.ts'
+import { DogRepository } from '../src/storage.ts'
 
 const temporaryRoots: string[] = []
 const originalDshHome = process.env.DSH_HOME
@@ -42,6 +53,8 @@ function deploymentConfig(workspace: string) {
     maxExpressionDepth: 64,
     maxSnapshotBytes: 67_108_864,
     allowPartialRoot: false,
+    subagentProvider: 'spawn',
+    subagentMaxDepth: 3,
   })
 }
 
@@ -71,7 +84,7 @@ function candidateGraph(): DogGraphInput {
 }
 
 describe.sequential('DoG Cordis plugin', () => {
-  it('registers exactly four model tools and removes them on fiber disposal', async () => {
+  it('registers exactly five model tools and removes them on fiber disposal', async () => {
     const home = await temporaryRoot()
     const workspace = await temporaryRoot()
     process.env.DSH_HOME = home
@@ -79,6 +92,7 @@ describe.sequential('DoG Cordis plugin', () => {
     const config = deploymentConfig(workspace)
     const fiber = await ctx.plugin({ inject, apply }, config)
     expect(ctx.tools.schemas().map(tool => tool.name).sort()).toEqual([
+      DOG_BIND_AGENT_TOOL,
       DOG_CREATE_TOOL,
       DOG_RUN_TOOL,
       DOG_STATUS_TOOL,
@@ -97,6 +111,7 @@ describe.sequential('DoG Cordis plugin', () => {
     const config = deploymentConfig(workspace)
     const fiber = await ctx.plugin({ inject, apply }, config)
     const signal = new AbortController().signal
+    const agent = { id: 'session-plugin-test', session: { header: { parentSession: 'parent-plugin-test' } } } as Agent
 
     const validate = await ctx.tools.execute({
       callId: CallId('validate'),
@@ -123,6 +138,7 @@ describe.sequential('DoG Cordis plugin', () => {
       name: DOG_RUN_TOOL,
       arguments: { graphId: 'plugin-smoke' },
       signal,
+      agent,
     })
     expect(run.isError).toBe(false)
     if (run.isError) throw new Error(run.error.message)
@@ -130,6 +146,25 @@ describe.sequential('DoG Cordis plugin', () => {
     if (typeof run.value !== 'object' || run.value === null || Array.isArray(run.value)) throw new Error('run result is not an object')
     const runId = run.value.runId
     if (typeof runId !== 'string') throw new Error('run result has no runId')
+
+    const bind = await ctx.tools.execute({
+      callId: CallId('bind'),
+      name: DOG_BIND_AGENT_TOOL,
+      arguments: { runId, goalId: 'root', role: 'orchestrator' },
+      signal,
+      agent,
+    })
+    expect(bind.isError).toBe(false)
+    if (bind.isError) throw new Error(bind.error.message)
+    expect(bind.value).toMatchObject({
+      runId,
+      goalId: 'root',
+      agent: {
+        sessionId: 'session-plugin-test',
+        parentSessionId: 'parent-plugin-test',
+        role: 'orchestrator',
+      },
+    })
 
     const status = await ctx.tools.execute({
       callId: CallId('status'),
@@ -139,13 +174,98 @@ describe.sequential('DoG Cordis plugin', () => {
     })
     expect(status.isError).toBe(false)
     if (status.isError) throw new Error(status.error.message)
-    expect(status.value).toEqual(run.value)
+    expect(status.value).toMatchObject({
+      runId,
+      graphId: 'plugin-smoke',
+      rootState: 'success',
+      goals: {
+        root: {
+          state: 'success',
+          agentSessions: [{
+            sessionId: 'session-plugin-test',
+            parentSessionId: 'parent-plugin-test',
+            role: 'orchestrator',
+          }],
+        },
+      },
+    })
     const runFiles = await readdir(join(home, 'dog', 'runs'))
     expect(runFiles).toHaveLength(1)
     const runFile = runFiles[0]
     if (runFile === undefined) throw new Error('persisted run file is missing')
     expect(JSON.parse(await readFile(join(home, 'dog', 'runs', runFile), 'utf8')))
-      .toMatchObject({ runId, rootState: 'success' })
+      .toMatchObject({
+        runId,
+        rootState: 'success',
+        invocation: { callId: 'run', agentSessionId: 'session-plugin-test', parentSessionId: 'parent-plugin-test' },
+        goals: {
+          root: {
+            agentSessions: [{
+              sessionId: 'session-plugin-test',
+              parentSessionId: 'parent-plugin-test',
+              role: 'orchestrator',
+            }],
+          },
+        },
+      })
     await fiber.dispose()
+  })
+
+  it('starts a continuable child through the host launcher and persists its DoG binding', async () => {
+    const home = await temporaryRoot()
+    const workspace = await temporaryRoot()
+    await writeFile(join(workspace, 'artifact.txt'), 'verified')
+    const config = deploymentConfig(workspace)
+    const engine = new DogEngine({ config, repository: new DogRepository(join(home, 'dog')) })
+    await engine.create(candidateGraph())
+    const run = await engine.run('plugin-smoke', {
+      invocation: { callId: 'owner-run', agentSessionId: 'owner-session' },
+    })
+    const launched: { label: string; prompt: string; parent: unknown }[] = []
+    const ctx = await setup()
+    ctx.effect(() => ctx.tools.register(createDogDelegateAgentTool(engine, {
+      async launch(input) {
+        launched.push({ label: input.label, prompt: input.prompt, parent: input.parent })
+        return { sessionId: 'continuable-child' }
+      },
+    })))
+    const agent = { id: 'owner-session', session: { header: {} } } as Agent
+    const delegated = await ctx.tools.execute({
+      callId: CallId('delegate'),
+      name: DOG_DELEGATE_AGENT_TOOL,
+      arguments: {
+        runId: run.runId,
+        goalId: 'leaf',
+        role: 'executor',
+        label: 'artifact worker',
+        prompt: 'Inspect the artifact and report evidence.',
+      },
+      signal: new AbortController().signal,
+      agent,
+    })
+    expect(delegated.isError).toBe(false)
+    if (delegated.isError) throw new Error(delegated.error.message)
+    expect(delegated.value).toMatchObject({
+      runId: run.runId,
+      goalId: 'leaf',
+      lifecycle: 'continuable',
+      agent: {
+        sessionId: 'continuable-child',
+        parentSessionId: 'owner-session',
+        role: 'executor',
+      },
+    })
+    expect(launched).toEqual([{ label: 'artifact worker', prompt: 'Inspect the artifact and report evidence.', parent: agent }])
+    await expect(engine.status(run.runId)).resolves.toMatchObject({
+      goals: {
+        leaf: {
+          agentSessions: [{
+            sessionId: 'continuable-child',
+            parentSessionId: 'owner-session',
+            role: 'executor',
+          }],
+        },
+      },
+    })
   })
 })
