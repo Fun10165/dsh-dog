@@ -6,7 +6,7 @@ This document is the implementation contract for the first DeepSeek Harness plug
 
 ## 1. Problem and invariants
 
-DoG represents a non-formal root objective as a directed acyclic graph of goals. A graph contains hierarchical goal membership and explicit cross-goal dependencies. A goal is complete only when its declared completion rule and its independently bound verifier agree on an immutable artifact snapshot.
+DoG represents a non-formal root objective as a directed acyclic graph of goals. A graph contains hierarchical goal membership and explicit cross-goal dependencies. In v0.1, a leaf is complete only when its independently bound verifier passes an immutable artifact snapshot; a composite is complete only when its required parent relations and restricted completion expression settle successfully.
 
 The implementation must preserve these invariants:
 
@@ -15,7 +15,7 @@ The implementation must preserve these invariants:
 3. Failure tolerance belongs to a parent-child relation, not to the shared child. Each incoming relation is evaluated independently.
 4. A verifier never accepts a path, command, verifier name, scope, or snapshot selected by the producer of the artifact or by a model-authored evidence object.
 5. Every successful verification is bound to an immutable artifact snapshot and an immutable acceptance plan. A later artifact version cannot inherit an earlier pass.
-6. Hard constraints are not compensable by soft-goal scores.
+6. The root goal is always a hard constraint. Hard constraints are not compensable by soft-goal scores; an explicitly allowed `partial_success` remains distinct from `success`.
 7. Root execution has honest terminal states, including `failure`, `infeasible`, `cancelled`, and `needs_replan`; the engine never fabricates success or waits forever for an impossible goal.
 8. Boolean completion expressions are parsed and type-checked into a restricted AST. No `eval`, dynamic import, shell command, or arbitrary expression interpreter is allowed.
 9. Human review is a normal terminal/control transition, not an exception hidden inside a retry loop.
@@ -52,7 +52,7 @@ The deferred features may consume the v0.1 persisted records later, but cannot w
 
 - **Goal**: a node whose desired condition is represented by a verifier and/or a composition of child outcomes.
 - **Leaf goal**: a goal with no containment children. In v0.1 it must have a trusted atomic verifier binding.
-- **Composite goal**: a goal with one or more containment children and a completion rule. It may also have an independent verifier in later versions; v0.1 uses the completion rule only unless an explicitly registered trusted verifier is present.
+- **Composite goal**: a goal with one or more containment children and a completion rule. v0.1 evaluates that rule only and rejects composite verifier fields rather than silently ignoring them.
 - **Containment edge**: `parent contains child`; it contributes the child's outcome to the parent's completion rule.
 - **Dependency edge**: `source depends_on target`; target must be complete before source may be evaluated. It carries data/version dependencies but does not automatically make the target a containment child.
 - **Parent relation**: the semantic object formed by one containment edge. It owns tolerance, requiredness, degradation policy, and merge policy for that particular parent-child use.
@@ -107,7 +107,7 @@ The external representation is JSON-compatible YAML if a future authoring layer 
 
 - `kind`: `leaf` or `composite`.
 - `title`: non-empty human-readable goal statement.
-- `constraint`: `hard` or `soft`.
+- `constraint`: `hard` or `soft`. The root must be `hard`; v0.1 records non-root softness but does not invent a soft-score model.
 - `completion`: restricted AST, required for composites with children.
 - `verifier`: a registry identifier and version only. It is not a module path, command, or model-supplied function.
 - `verifierParams`: declarative parameters checked by the registry for the selected verifier. Parameters are copied into the acceptance plan before execution. The graph may refer to a host-bound `artifactId`, but may not select a filesystem root, path, command, or verifier implementation.
@@ -122,6 +122,8 @@ A leaf cannot declare a completion expression. A composite cannot be evaluated a
 - `merge`: `none`, `parent`, or `human`. v0.1 accepts only `none`; later worktree execution may use parent-owned merge.
 
 A shared child can therefore be fatal for one parent and tolerable for another. The child itself has no global `tolerable` flag.
+
+Degradation applies only after the direct child settles as a failure. It never converts `needs_human` or another unresolved state into success merely because the fallback passed. If several required relations fail, any `fatal` relation dominates tolerable failures regardless of edge order. A degradation target cannot be the failed child itself.
 
 ### Dependency fields
 
@@ -164,11 +166,13 @@ Before execution, the system/compiler—not the producer—creates an acceptance
   "goalId": "file",
   "verifierId": "file.exists",
   "verifierVersion": "1",
-  "artifact": {
+  "artifactId": "deck",
+  "rootBindingId": "workspace",
+  "relativePath": "deck.pptx",
+  "snapshot": {
     "artifactId": "deck",
-    "rootBindingId": "workspace",
-    "relativePath": "deck.pptx",
     "snapshotId": "sha256:...",
+    "exists": true,
     "byteLength": 1234,
     "sha256": "..."
   },
@@ -178,7 +182,7 @@ Before execution, the system/compiler—not the producer—creates an acceptance
 }
 ```
 
-The host configuration, not the graph producer, maps `artifactId` to a root binding and relative path. The plan is deep-frozen in memory and persisted. The system resolves that mapping, canonicalizes the resulting path, and checks it against the approved root before snapshot capture. A path supplied in a child output or evidence object is ignored and cannot override the plan.
+The host configuration, not the graph producer, maps `artifactId` to a root binding and relative path. The plan is deep-frozen in memory and persisted with those fields and an explicit file scope. The system resolves that mapping, canonicalizes the resulting path, and checks it against the approved root before snapshot capture. A path supplied in a child output or evidence object is ignored and cannot override the plan.
 
 ### 6.2 Snapshot lifecycle
 
@@ -231,13 +235,13 @@ These are intentionally narrow. PPT-specific XML/rendering verifiers will be add
 
 `pending`, `running`, `success`, `failure`, `blocked`, `needs_human`, `cancelled`, `invalidated`, `partial`.
 
-A node result includes the run ID, graph revision, input/dependency hashes, artifact snapshot IDs, and verifier records. `success` is never copied across graph revisions or snapshot IDs.
+A successful leaf verification record carries the run ID, graph digest, artifact ID, snapshot ID, verifier version, and bounded observation. Composite results carry their state and reason. v0.1 does not claim separate dependency-output hashes because it executes no producer work; the graph digest plus immutable snapshot IDs are its complete reuse boundary.
 
 ### Root terminal states
 
-- `success`: all hard requirements pass and configured soft threshold is met.
-- `partial_success`: all hard requirements pass but the soft threshold is below target; only permitted if the root policy allows it.
-- `failure`: at least one non-tolerable hard relation or independent hard verifier fails.
+- `success`: the restricted root completion expression is true and every required parent relation succeeds directly or through its declared degradation target.
+- `partial_success`: the root is `partial` and deployment explicitly sets `allowPartialRoot`; v0.1 has no independent soft-score threshold.
+- `failure`: a non-tolerable required relation fails, the root completion expression settles false under fatal policy, or partial root delivery is disabled.
 - `infeasible`: the declared conditions cannot be met under available artifacts or capabilities.
 - `needs_replan`: the graph or goal contract must change before execution can continue.
 - `cancelled`: human or policy ended execution; partial records remain inspectable.
@@ -269,6 +273,8 @@ A child cannot merge another child's worktree, and a pass from a pre-merge snaps
 
 ## 10. Lifecycle
 
+The full DoG lifecycle is below. In v0.1, coverage review and human review are external control points; the plugin deterministically compiles, verifies, persists, and surfaces `needs_replan` rather than pretending to run an autonomous reviewer.
+
 1. `draft`: author or planner supplies a graph.
 2. `coverage_review`: an independent reviewer checks that the root objective, hard constraints, required artifacts, and obvious failure modes are represented. It may reject the draft; it cannot silently add goals.
 3. `compile`: validate graph, resolve trusted verifier IDs, bind artifact scope, capture snapshots, and assign a graph revision.
@@ -282,12 +288,13 @@ Coverage review and future LLM verification must use a context-isolated session.
 
 ## 11. Persistence
 
-The plugin stores under `$DSH_HOME/dog/`:
+By default the plugin stores under `$DSH_HOME/dog/` (the directory name is configurable):
 
-- `graphs/<graph-id>.json`: immutable graph revisions;
-- `runs/<run-id>.json`: execution state and terminal result;
-- `artifacts/<sha256>`: immutable snapshot bytes and manifest;
-- `verifications/<run-id>.jsonl`: append-only verifier results.
+- `graphs/<graph-digest>.json`: immutable compiled graph revisions and acceptance plans;
+- `graph-index/<host-safe-graph-key>.json`: latest-revision lookup for a graph ID; the indexed digest must be a lower-case SHA-256 value before it is used as a filename;
+- `runs/<host-safe-run-key>.json`: execution state and terminal result;
+- `artifacts/<snapshot-key>.bin|json`: immutable snapshot bytes and manifest;
+- `verifications/<host-safe-run-key>.jsonl`: append-only verifier results.
 
 Writes use temporary files plus atomic rename. Records contain schema versions and never contain credentials. A status read returns metadata and bounded error/evidence fields; it does not dump arbitrary session context.
 
@@ -316,6 +323,7 @@ artifactBindings: []       # host bindings: [{ id: deck, rootId: workspace, rela
 storageDirectory: "dog"   # relative to DSH_HOME
 maxGraphNodes: 256
 maxExpressionNodes: 512
+maxExpressionDepth: 64
 maxSnapshotBytes: 67108864
 allowPartialRoot: false
 ```
@@ -324,7 +332,7 @@ allowPartialRoot: false
 
 ## 14. Security and failure policy
 
-- Reject traversal, absolute paths outside approved roots, symlink escapes, duplicate IDs, cycles, unknown verifier IDs, malformed schemas, and oversized snapshots.
+- Reject traversal, absolute paths outside approved roots, symlink escapes, duplicate IDs or dependency edges, cycles, self-degradation, unknown verifier IDs, malformed schemas, and oversized snapshots.
 - Never use `eval`, `new Function`, dynamic imports from graph data, or shell interpolation.
 - Redact credentials from errors and persisted evidence.
 - Treat all model-authored graph fields, executor output, and evidence as untrusted data.
