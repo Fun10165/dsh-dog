@@ -75,21 +75,24 @@ The external representation is JSON-compatible YAML if a future authoring layer 
       "kind": "composite",
       "title": "Deliver an acceptable deck",
       "constraint": "hard",
-      "completion": { "op": "all", "refs": ["file", "readable"] }
+      "completion": { "op": "all", "items": [
+        { "op": "ref", "id": "file" },
+        { "op": "ref", "id": "readable" }
+      ] }
     },
     "file": {
       "kind": "leaf",
       "title": "The deck exists",
       "constraint": "hard",
       "verifier": { "id": "file.exists", "version": "1" },
-      "verifierParams": { "path": "deck.pptx" }
+      "verifierParams": { "artifactId": "deck" }
     },
     "readable": {
       "kind": "leaf",
       "title": "The deck is readable",
       "constraint": "soft",
       "verifier": { "id": "file.non_empty", "version": "1" },
-      "verifierParams": { "path": "deck.pptx" }
+      "verifierParams": { "artifactId": "deck" }
     }
   },
   "contains": [
@@ -107,7 +110,7 @@ The external representation is JSON-compatible YAML if a future authoring layer 
 - `constraint`: `hard` or `soft`.
 - `completion`: restricted AST, required for composites with children.
 - `verifier`: a registry identifier and version only. It is not a module path, command, or model-supplied function.
-- `verifierParams`: declarative parameters checked by the registry for the selected verifier. Parameters are copied into the acceptance plan before execution.
+- `verifierParams`: declarative parameters checked by the registry for the selected verifier. Parameters are copied into the acceptance plan before execution. The graph may refer to a host-bound `artifactId`, but may not select a filesystem root, path, command, or verifier implementation.
 
 A leaf cannot declare a completion expression. A composite cannot be evaluated as complete while a required dependency is unresolved. Unknown fields are rejected in strict mode to prevent hidden execution directives.
 
@@ -163,23 +166,23 @@ Before execution, the system/compiler—not the producer—creates an acceptance
   "verifierVersion": "1",
   "artifact": {
     "artifactId": "deck",
-    "root": "/approved/workspace",
+    "rootBindingId": "workspace",
     "relativePath": "deck.pptx",
     "snapshotId": "sha256:...",
     "byteLength": 1234,
     "sha256": "..."
   },
-  "scope": { "kind": "file", "relativePath": "deck.pptx" },
-  "params": { "path": "deck.pptx" },
+  "scope": { "kind": "file", "artifactId": "deck" },
+  "params": { "artifactId": "deck" },
   "evidenceSchemaId": "file.exists/v1"
 }
 ```
 
-The plan is deep-frozen in memory and persisted. Its artifact path is resolved beneath the approved root, canonicalized, and checked against the allowed scope before snapshot capture. A path supplied in a child output or evidence object is ignored.
+The host configuration, not the graph producer, maps `artifactId` to a root binding and relative path. The plan is deep-frozen in memory and persisted. The system resolves that mapping, canonicalizes the resulting path, and checks it against the approved root before snapshot capture. A path supplied in a child output or evidence object is ignored and cannot override the plan.
 
 ### 6.2 Snapshot lifecycle
 
-1. The system resolves the configured artifact root and relative path.
+1. The system resolves the host-bound artifact ID to its configured root and relative path.
 2. It reads the bytes itself and computes a SHA-256 digest.
 3. It writes or reuses an immutable content-addressed snapshot.
 4. The verifier reads only that snapshot and the fixed plan parameters.
@@ -295,11 +298,11 @@ Package: `@dsh-external/dsh-dog`.
 The host plugin registers these model-facing tools through `ctx.tools`:
 
 - `dog_validate`: parse and statically validate a graph without writing it.
-- `dog_create`: validate, compile, snapshot the explicitly supplied artifact root/path, and persist a graph revision.
+- `dog_create`: validate, compile, resolve only host-bound artifact IDs, snapshot those artifacts, and persist a graph revision.
 - `dog_run`: evaluate the trusted verifiers for a stored graph run and recompute all affected upstream nodes.
 - `dog_status`: return a bounded graph/run status and verification evidence.
 
-All tool arguments cross a model boundary and are validated. Artifact roots are restricted by plugin configuration; arbitrary filesystem roots are rejected unless explicitly allowed by the host configuration. The tools do not spawn shell commands.
+All tool arguments cross a model boundary and are validated. Model-authored graphs may reference only artifact IDs predeclared by host configuration; they cannot supply artifact roots or paths. The tools do not spawn shell commands.
 
 The plugin exports `name`, `Config`, `inject`, and `apply` according to the DSH loader contract. `apply` registers effects with disposers and fails loudly for invalid configuration or missing required services.
 
@@ -308,7 +311,8 @@ The plugin exports `name`, `Config`, `inject`, and `apply` according to the DSH 
 The initial deployment configuration is declarative:
 
 ```yaml
-artifactRoots: []          # absolute approved roots; empty means no artifact creation is allowed
+artifactRoots: []          # host bindings: [{ id: workspace, path: /approved/workspace }]
+artifactBindings: []       # host bindings: [{ id: deck, rootId: workspace, relativePath: deck.pptx }]
 storageDirectory: "dog"   # relative to DSH_HOME
 maxGraphNodes: 256
 maxExpressionNodes: 512
@@ -316,7 +320,7 @@ maxSnapshotBytes: 67108864
 allowPartialRoot: false
 ```
 
-No model-authored graph can override these ceilings. A future permission integration may add user approval for new roots; v0.1 rejects them.
+`artifactRoots` and `artifactBindings` are host-authored configuration, validated at plugin load, and are the only source of target paths. No model-authored graph can override them or introduce a new binding. A future permission integration may add user approval for new roots; v0.1 rejects them.
 
 ## 14. Security and failure policy
 
