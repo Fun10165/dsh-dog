@@ -23,12 +23,14 @@ The implementation must preserve these invariants:
 11. Every verification execution is assumed impure. No verifier — built-in, registered, or agent-driven — is trusted to be side-effect free. Every verification runs in a mutually exclusive isolated workspace provided by the host; writes are confined to the workspace, and the only result channel is the host-captured verification record.
 12. DoG does not own development work. Development agents submit artifacts through host-bound artifact IDs; DoG consumes immutable snapshots and produces machine-readable reports. There is no merge: DoG never merges, never owns a worktree, and never accepts a parent-owned merge, now or later.
 13. Incremental verification is decided only by a programmatically extracted grounding-material digest with its verifier contract version. Graph edges are never used to decide revalidation. Verifications declared non-programmatic are never incremental: every fresh artifact export re-runs them unconditionally.
+14. A programmatic leaf may exist inside DoG only beside at least one non-programmatic node under the same composite. A composite whose children are all programmatic is itself fully programmatic (deterministic verifiers plus the restricted completion AST) and is rejected at compile time: such a subtree belongs to the existing CI pipeline. Fully programmatic subtrees are never expanded inside DoG; they are represented as a gate on a CI-produced artifact binding instead.
 
 ## 2. Scope of v0.2
 
 ### Implemented in this plugin slice
 
-- Parse and validate a JSON DoG graph.
+- Parse and validate a JSON DoG graph, including the non-programmatic-subtree rule.
+- Reject fully programmatic subtrees at compile time with guidance to move them to the existing CI pipeline.
 - Validate containment/dependency references, duplicate IDs, acyclicity, expression references, and parent-edge semantics.
 - Compile a graph into an immutable acceptance plan, including verifier contract binding and grounding extractor binding.
 - Capture a content-addressed snapshot of a bounded local artifact file.
@@ -40,6 +42,10 @@ The implementation must preserve these invariants:
 - Expose model-facing tools for graph creation, validation, verification, status inspection, and agent responsibility binding.
 - Register and dispose all DSH tool effects through the normal Cordis plugin lifecycle.
 - Expose a read-only WebUI graph debugger over the trusted DSH Connection RPC, with a compact snapshot plus lazy per-goal runtime traces and canonical session navigation.
+
+### Relationship to existing CI
+
+DoG is the agentic layer on top of an existing CI pipeline, not a replacement. Existing CI carries fully programmatic verification (build, unit tests, format, lint, package-content checks). DoG carries the non-programmatic goals and gates on CI results through artifact bindings: a programmatic leaf inside DoG either (a) checks a CI-produced artifact (e.g. `ci-report.json`) with a deterministic verifier while sharing its composite with agentic leaves, or (b) is not present in the graph at all because its whole subtree is programmatic. DoG never re-runs a pipeline that already exists.
 
 ### Out of scope; explicitly not DoG, not deferred
 
@@ -145,6 +151,15 @@ The external representation is JSON-compatible YAML if a future authoring layer 
 - `verifierParams`: declarative parameters checked by the contract registry for the selected contract. Parameters are copied into the acceptance plan before execution. The graph may refer to a host-bound `artifactId` and may supply task-specific targets/requirements, but may not select a filesystem root, path, command, tool set, or verifier implementation.
 
 A leaf cannot declare a completion expression. A composite cannot be evaluated as complete while a required dependency is unresolved. Unknown fields are rejected in strict mode to prevent hidden execution directives.
+
+### Programmatic-subtree rule (compile-time)
+
+A node is *programmatic* when its settlement is fully computable: a leaf whose verifier contract is deterministic (non-agentic), or a composite whose children are all programmatic (deterministic verifiers plus the restricted completion AST). DoG graphs must be *agentic at every composite*:
+
+- a programmatic leaf is allowed only if its composite has at least one sibling that is non-programmatic;
+- a composite whose children are all programmatic is itself programmatic and compilation **rejects** it, with guidance: move this subtree to the existing CI pipeline and, if DoG must gate on it, bind a CI-produced artifact (e.g. `ci-report.json`) as a programmatic leaf beside an agentic sibling.
+
+The rejection happens before any snapshot capture or run: the rule is static, and it is decided from the graph plus the contract registry, never from runtime results.
 
 ### Parent-relation fields
 
@@ -267,8 +282,8 @@ interface VerifierContract {
 
 The registry owns parameter validation, target selection, and evidence construction. Two execution kinds exist:
 
-- **Deterministic atomic checks** (`file.exists/v1`, `file.non_empty/v1`, `file.sha256/v1`, `text.includes/v1`): trusted library functions run by the host inside the isolated workspace. They may also be used by a Verifier Agent as tools.
-- **Agentic contracts** (`vision.overlap/v1` and similar): executed by a context-isolated Verifier Agent that receives the contract, the read-only snapshot, and the allowed tool set inside an isolated workspace. The agent cannot modify the requirement, evidence schema, tool set, extractor, or its own task.
+- **Deterministic atomic checks** (`file.exists/v1`, `file.non_empty/v1`, `file.sha256/v1`, `text.includes/v1`): trusted library functions run by the host inside the isolated workspace. They are the *programmatic* category. They may also be used by a Verifier Agent as tools, and may appear as DoG leaves only under the programmatic-subtree rule (§4): their composite must contain at least one non-programmatic sibling.
+- **Agentic contracts** (`vision.overlap/v1` and similar): executed by a context-isolated Verifier Agent that receives the contract, the read-only snapshot, and the allowed tool set inside an isolated workspace. They are the *non-programmatic* category. The agent cannot modify the requirement, evidence schema, tool set, extractor, or its own task.
 
 Grounding extractors are host-registered trusted implementations, never graph-supplied. The v0.2 bundled extractor is file-content (`file.content/v1`: normalized bytes of the bound snapshot). PPT rendering/geometry and code AST/token extractors are host-registered work items.
 
@@ -413,7 +428,7 @@ gmDigestAlgo: "sha256"
 
 ## 14. Security and failure policy
 
-- Reject traversal, absolute paths outside approved roots, symlink escapes, duplicate IDs or dependency edges, cycles, self-degradation, unknown verifier IDs, malformed schemas, oversized snapshots, and any `merge` field.
+- Reject traversal, absolute paths outside approved roots, symlink escapes, duplicate IDs or dependency edges, cycles, self-degradation, unknown verifier IDs, malformed schemas, oversized snapshots, fully programmatic subtrees, and any `merge` field.
 - Never use `eval`, `new Function`, dynamic imports from graph data, or shell interpolation.
 - Isolated workspaces are mandatory for every verification; out-of-workspace access fails closed.
 - Redact credentials from errors and persisted evidence.
@@ -456,7 +471,7 @@ The developer cannot build or edit the graph: its tool surface is `dog_run` + `d
 
 ### 16.2 Sequence
 
-1. `draft`: owner states the objective; planning agent decomposes it. Leaves include `renderable` (deterministic `render.probe`, GM = rendered bytes of all pages), `page3-fig2-overlap` (agentic `vision.overlap`, GM = page-3 layout boxes + screenshot), `page7-truncation` (agentic `vision.truncation`, GM = page-7 render), `brand-consistency` (agentic `vision.brand`, declared `non_programmatic`). `page3-fig2-overlap` and `page7-truncation` depend on `renderable` (verification gate).
+1. `draft`: owner states the objective; planning agent decomposes it. Leaves include `renderable` (deterministic `render.probe`, GM = rendered bytes of all pages), `page3-fig2-overlap` (agentic `vision.overlap`, GM = page-3 layout boxes + screenshot), `page7-truncation` (agentic `vision.truncation`, GM = page-7 render), `brand-consistency` (agentic `vision.brand`, declared `non_programmatic`). `page3-fig2-overlap` and `page7-truncation` depend on `renderable` (verification gate). Compilation is legal because every composite (root, page composites) has at least one non-programmatic child: `renderable` is programmatic but coexists with agentic siblings under the same parent. The conventional programmatic checks (unit tests, lint, bundle size) are not in the graph: they run in the existing CI pipeline and are gated by a programmatic leaf on a CI-produced artifact binding beside the agentic leaves.
 2. `coverage_review` → approved; `confirm` → owner accepts; `compile` → `dog_create` fixes the contract set and the snapshot scope.
 3. Developer writes `deck.pptx` to the bind path and calls `dog_run` (both required to trigger CI).
 4. `capture` takes an immutable snapshot; `revalidate_select` finds no history in run 1 → all leaves re-run; `brand-consistency` always re-runs.
