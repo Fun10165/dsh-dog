@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1460 1020" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#4b5563" />
+    </marker>
+  </defs>
+  <rect width="1460" height="1020" fill="#f8fafc" />
+
+  <text x="24" y="36" font-size="21" font-weight="700" fill="#111827">DoG v0.2 — module structure</text>
+  <text x="24" y="58" font-size="13" fill="#6b7280">Colors: green = human, purple = LLM agent, blue = program, orange = dev agent (outside), teal = existing CI (outside), gray = storage</text>
+
+  <g font-size="12">
+    <rect x="24" y="72" width="14" height="14" rx="3" fill="#2f9e63" /><text x="44" y="84" fill="#374151">Human</text>
+    <rect x="104" y="72" width="14" height="14" rx="3" fill="#7c6ce8" /><text x="124" y="84" fill="#374151">LLM Agent</text>
+    <rect x="204" y="72" width="14" height="14" rx="3" fill="#3f7fd1" /><text x="224" y="84" fill="#374151">Program</text>
+    <rect x="308" y="72" width="14" height="14" rx="3" fill="#d97706" /><text x="328" y="84" fill="#374151">Dev Agent (abstracted)</text>
+    <rect x="492" y="72" width="14" height="14" rx="3" fill="#0d9488" /><text x="512" y="84" fill="#374151">Existing CI</text>
+    <rect x="620" y="72" width="14" height="14" rx="3" fill="#6b7280" /><text x="640" y="84" fill="#374151">Storage</text>
+  </g>
+
+  <!-- ================= Zone A: acceptance side (left) ================= -->
+  <rect x="24" y="100" width="330" height="330" rx="12" fill="none" stroke="#e5e7eb" stroke-width="1.5" stroke-dasharray="5 4" />
+  <text x="40" y="122" font-size="13" font-weight="600" fill="#6b7280">Acceptance side (graph time)</text>
+
+  <rect x="60" y="140" width="260" height="52" rx="9" fill="#2f9e63" />
+  <text x="190" y="162" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle">Human project owner</text>
+  <text x="190" y="180" font-size="11" fill="#e8f5ee" text-anchor="middle">states objective · confirms graph</text>
+
+  <rect x="60" y="222" width="260" height="52" rx="9" fill="#7c6ce8" />
+  <text x="190" y="244" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle">Planning agent</text>
+  <text x="190" y="262" font-size="11" fill="#efeaff" text-anchor="middle">decomposes objective → graph (LLM)</text>
+
+  <rect x="60" y="304" width="260" height="52" rx="9" fill="#7c6ce8" />
+  <text x="190" y="326" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle">Coverage reviewer</text>
+  <text x="190" y="344" font-size="11" fill="#efeaff" text-anchor="middle">isolated review of graph (LLM)</text>
+
+  <line x1="190" y1="192" x2="190" y2="222" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+  <line x1="190" y1="274" x2="190" y2="304" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+
+  <!-- ================= Zone B: DoG core (center) ================= -->
+  <rect x="390" y="100" width="600" height="760" rx="12" fill="#eef2f7" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="406" y="122" font-size="13" font-weight="600" fill="#334155">DoG core — DSH plugin (Agentic CI)</text>
+
+  <rect x="420" y="140" width="540" height="44" rx="9" fill="#3f7fd1" />
+  <text x="690" y="160" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Tool surface (program)</text>
+  <text x="690" y="176" font-size="11" fill="#dbe9f8" text-anchor="middle">dog_validate · dog_create · dog_run · dog_status · dog_bind_agent · dog_delegate_agent</text>
+
+  <rect x="420" y="204" width="540" height="44" rx="9" fill="#3f7fd1" />
+  <text x="690" y="224" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Schema layer (program)</text>
+  <text x="690" y="240" font-size="11" fill="#dbe9f8" text-anchor="middle">schemas/schema-0.2/*.json — fail-closed validation of every payload</text>
+
+  <rect x="420" y="268" width="540" height="44" rx="9" fill="#3f7fd1" />
+  <text x="690" y="288" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Compiler (program)</text>
+  <text x="690" y="304" font-size="11" fill="#dbe9f8" text-anchor="middle">graph parse · programmatic-subtree rule · acceptance plans · contract resolution</text>
+
+  <line x1="320" y1="248" x2="420" y2="290" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+  <text x="296" y="272" font-size="10" fill="#6b7280">graph JSON</text>
+
+  <rect x="420" y="332" width="540" height="44" rx="9" fill="#3f7fd1" />
+  <text x="690" y="352" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Scheduler (program)</text>
+  <text x="690" y="368" font-size="11" fill="#dbe9f8" text-anchor="middle">dependency gates · revalidate select · workspace pool · concurrency limit</text>
+
+  <rect x="420" y="396" width="540" height="40" rx="9" fill="#3f7fd1" />
+  <text x="690" y="414" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Isolated workspace manager (program)</text>
+  <text x="690" y="429" font-size="11" fill="#dbe9f8" text-anchor="middle">one mutually exclusive workspace per verification</text>
+
+  <line x1="690" y1="312" x2="690" y2="332" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+  <line x1="690" y1="376" x2="690" y2="396" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+
+  <rect x="420" y="456" width="540" height="150" rx="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="436" y="478" font-size="12" font-weight="600" fill="#475569">Verifier execution (inside workspaces)</text>
+
+  <rect x="440" y="492" width="240" height="56" rx="9" fill="#3f7fd1" />
+  <text x="560" y="512" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Deterministic contracts</text>
+  <text x="560" y="530" font-size="11" fill="#dbe9f8" text-anchor="middle">file.exists · file.sha256 · … (program)</text>
+
+  <rect x="700" y="492" width="240" height="56" rx="9" fill="#7c6ce8" />
+  <text x="820" y="512" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Agentic contracts</text>
+  <text x="820" y="530" font-size="11" fill="#efeaff" text-anchor="middle">vision.* — Verifier Agent (LLM)</text>
+
+  <line x1="690" y1="436" x2="560" y2="492" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+  <line x1="690" y1="436" x2="820" y2="492" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+
+  <rect x="420" y="626" width="540" height="44" rx="9" fill="#3f7fd1" />
+  <text x="690" y="646" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Grounding extractors (program, host-registered)</text>
+  <text x="690" y="662" font-size="11" fill="#dbe9f8" text-anchor="middle">snapshot → GM → gmDigest · decides revalidate vs inherited</text>
+
+  <line x1="690" y1="606" x2="690" y2="626" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+
+  <rect x="420" y="690" width="540" height="44" rx="9" fill="#3f7fd1" />
+  <text x="690" y="710" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Report (program)</text>
+  <text x="690" y="726" font-size="11" fill="#dbe9f8" text-anchor="middle">machine-readable summary + evidence + revalidated/inherited + warning</text>
+
+  <line x1="690" y1="670" x2="690" y2="690" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+
+  <rect x="420" y="754" width="540" height="52" rx="9" fill="#6b7280" />
+  <text x="690" y="774" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Storage (program)</text>
+  <text x="690" y="792" font-size="11" fill="#e5e7eb" text-anchor="middle">graphs · runs · verifications · artifacts · runtime-events (append-only, content-addressed)</text>
+
+  <line x1="690" y1="734" x2="690" y2="754" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+
+  <!-- ================= Zone C: development side (right) ================= -->
+  <rect x="1030" y="100" width="330" height="330" rx="12" fill="none" stroke="#e5e7eb" stroke-width="1.5" stroke-dasharray="5 4" />
+  <text x="1046" y="122" font-size="13" font-weight="600" fill="#6b7280">Development side (outside DoG)</text>
+
+  <rect x="1066" y="140" width="260" height="52" rx="9" fill="#d97706" />
+  <text x="1196" y="162" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle">Development agent</text>
+  <text x="1196" y="180" font-size="11" fill="#fde8d0" text-anchor="middle">produces artifact · consumes reports</text>
+
+  <rect x="1066" y="222" width="260" height="52" rx="9" fill="#0d9488" />
+  <text x="1196" y="244" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle">Existing CI pipeline</text>
+  <text x="1196" y="262" font-size="11" fill="#d7f2ef" text-anchor="middle">programmatic checks (build · tests · lint)</text>
+
+  <rect x="1066" y="304" width="260" height="52" rx="9" fill="#6b7280" />
+  <text x="1196" y="326" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Artifact bind path</text>
+  <text x="1196" y="344" font-size="11" fill="#e5e7eb" text-anchor="middle">deck.pptx · ci-report.json (host-approved)</text>
+
+  <text x="1046" y="386" font-size="11" fill="#374151">Out: dog_run summary / dog_status report (JSON, report.schema.json)</text>
+  <text x="1046" y="404" font-size="11" fill="#374151">In: artifact bytes via bind path → capture (content-addressed)</text>
+  <text x="1046" y="422" font-size="11" fill="#374151">In: CI result via ci-report.json → deterministic verifier</text>
+
+  <!-- ================= WebUI ================= -->
+  <rect x="420" y="830" width="540" height="48" rx="9" fill="#3f7fd1" />
+  <text x="690" y="850" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">WebUI debugger (read-only program)</text>
+  <text x="690" y="866" font-size="11" fill="#dbe9f8" text-anchor="middle">snapshot RPC · goal traces · canonical session navigation</text>
+  <line x1="690" y1="806" x2="690" y2="830" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)" />
+</svg>
