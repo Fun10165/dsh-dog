@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dsh-external/dsh-dog/schemas/schema-0.2/verification.schema.json",
+  "title": "DoG v0.2 trusted verification record (verifications/<run-id>.jsonl)",
+  "description": "Append-only trusted verifier result; one JSON object per line. Machine-readable counterpart of SPEC §6.3 + §11. A record named by runId+goalId+gmDigest+snapshotId is the reuse boundary for inheritance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "runId", "graphId", "graphDigest", "goalId",
+    "verifierId", "verifierVersion", "artifactId", "snapshotId",
+    "gmDigest", "passed", "observation", "at"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "runId": { "$ref": "#/$defs/uuid" },
+    "graphId": { "type": "string", "minLength": 1 },
+    "graphDigest": { "$ref": "#/$defs/sha256" },
+    "goalId": { "type": "string", "minLength": 1 },
+    "verifierId": { "type": "string", "minLength": 1 },
+    "verifierVersion": { "type": "string", "minLength": 1 },
+    "artifactId": { "type": "string", "minLength": 1 },
+    "snapshotId": { "$ref": "#/$defs/sha256" },
+    "gmDigest": { "$ref": "#/$defs/sha256" },
+    "passed": { "type": "boolean" },
+    "observation": {
+      "description": "Contract-specific, schema-valid evidence (never a bare {passed: true}; never verifier-selected scope).",
+      "type": "object"
+    },
+    "at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

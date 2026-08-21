@@ -387,6 +387,8 @@ By default the plugin stores under `$DSH_HOME/dog/` (the directory name is confi
 
 Writes use temporary files plus atomic rename for snapshots and append-only records for event streams. Records contain schema versions and never contain credentials, prompts, raw transcripts, or artifact bytes outside the content-addressed artifact store. A status read returns metadata and bounded error/evidence fields; it does not dump arbitrary session context.
 
+Every exchange payload in this spec (graph input, run record, verification record, runtime event, CI report) has a machine-readable JSON Schema declared under `schemas/schema-0.2/*.schema.json` (draft 2020-12). These are the normative shapes: any payload that does not validate against its declared schema is rejected before it is parsed or persisted. Runtime date-time fields use the standard `format: "date-time"` and require format-aware validators (e.g. ajv-formats); structure validation is format-independent. Graph-level semantic rules that JSON Schema cannot express (reference resolution, acyclicity, programmatic-subtree rejection, verifier contract existence) remain compiler-enforced per §4.
+
 ## 12. DSH plugin surface in v0.2
 
 Package: `@dsh-external/dsh-dog`.

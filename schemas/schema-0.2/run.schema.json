@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dsh-external/dsh-dog/schemas/schema-0.2/run.schema.json",
+  "title": "DoG v0.2 persisted run record (runs/<run-id>.json)",
+  "description": "Execution state and terminal result of one dog_run. Machine-readable counterpart of SPEC §8 + §11.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runId", "graphId", "graphDigest", "state", "goals", "createdAt", "updatedAt"],
+  "properties": {
+    "runId": { "$ref": "#/$defs/uuid" },
+    "graphId": { "type": "string", "minLength": 1 },
+    "graphDigest": { "$ref": "#/$defs/sha256" },
+    "state": { "enum": ["running", "completed", "cancelled", "failed"] },
+    "rootState": {
+      "description": "Terminal root state when settled (SPEC §8).",
+      "enum": ["success", "partial_success", "failure", "infeasible", "needs_replan", "cancelled"]
+    },
+    "goals": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/goalResult" }
+    },
+    "gmDigests": {
+      "description": "Per-leaf grounding-material digest recorded at revalidate_select.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/sha256" }
+    },
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callId"],
+      "properties": {
+        "callId": { "type": "string", "minLength": 1 },
+        "agentSessionId": { "type": "string", "minLength": 1 },
+        "parentSessionId": { "type": "string", "minLength": 1 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "warning": {
+      "type": "string",
+      "description": "Bounded run warning (e.g. runtime-event persist failure); never alters a verdict."
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "goalResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "enum": [
+            "pending", "running", "success", "failure", "blocked",
+            "needs_human", "cancelled", "invalidated", "partial", "inherited"
+          ]
+        },
+        "reason": { "type": "string" },
+        "inheritedFrom": {
+          "description": "Run ID whose verification record was reused when state=inherited.",
+          "$ref": "#/$defs/uuid"
+        }
+      }
+    }
+  }
+}

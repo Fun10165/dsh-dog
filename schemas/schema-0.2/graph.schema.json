@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dsh-external/dsh-dog/schemas/schema-0.2/graph.schema.json",
+  "title": "DoG v0.2 graph input (dog_validate / dog_create payload)",
+  "description": "Verification graph authored by the planning agent. Machine-readable counterpart of SPEC §4. Graph-level semantic rules (reference resolution, acyclicity, programmatic-subtree rejection) are enforced by the compiler, not expressible here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "root", "nodes", "contains", "dependsOn"],
+  "properties": {
+    "schemaVersion": { "const": "0.2" },
+    "id": { "$ref": "#/$defs/asciiId" },
+    "root": { "$ref": "#/$defs/goalId" },
+    "nodes": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/goalId" },
+      "additionalProperties": { "$ref": "#/$defs/node" }
+    },
+    "contains": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/containment" }
+    },
+    "dependsOn": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/dependency" }
+    }
+  },
+  "$defs": {
+    "asciiId": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+    },
+    "goalId": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "title", "constraint"],
+      "properties": {
+        "kind": { "enum": ["leaf", "composite"] },
+        "title": { "type": "string", "minLength": 1 },
+        "constraint": { "enum": ["hard", "soft"] },
+        "completion": {
+          "description": "Required when kind=composite; forbidden when kind=leaf.",
+          "$ref": "#/$defs/expr"
+        },
+        "verifier": {
+          "description": "Required when kind=leaf.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "verifierParams": {
+          "type": "object",
+          "description": "Declarative parameters checked by the contract registry (example: artifactId, target, requirement)."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "leaf" } }, "required": ["kind"] },
+          "then": {
+            "required": ["verifier"],
+            "not": { "required": ["completion"] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "composite" } }, "required": ["kind"] },
+          "then": {
+            "required": ["completion"],
+            "not": { "required": ["verifier"] }
+          }
+        }
+      ]
+    },
+    "expr": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "id"],
+          "properties": {
+            "op": { "const": "ref" },
+            "id": { "$ref": "#/$defs/goalId" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "items"],
+          "properties": {
+            "op": { "enum": ["all", "any"] },
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/expr" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "item"],
+          "properties": {
+            "op": { "const": "not" },
+            "item": { "$ref": "#/$defs/expr" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "count", "items"],
+          "properties": {
+            "op": { "const": "atLeast" },
+            "count": { "type": "integer", "minimum": 1 },
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/expr" }
+            }
+          }
+        }
+      ]
+    },
+    "containment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parent", "child", "required", "failure"],
+      "properties": {
+        "parent": { "$ref": "#/$defs/goalId" },
+        "child": { "$ref": "#/$defs/goalId" },
+        "required": { "type": "boolean" },
+        "failure": { "enum": ["fatal", "tolerable", "degrade"] },
+        "degradeTo": {
+          "description": "Optional approved sibling target when failure=degrade.",
+          "$ref": "#/$defs/goalId"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "target"],
+      "properties": {
+        "source": { "$ref": "#/$defs/goalId" },
+        "target": { "$ref": "#/$defs/goalId" },
+        "data": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}
