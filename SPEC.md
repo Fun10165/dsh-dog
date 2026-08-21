@@ -1,76 +1,92 @@
 # DoG — DAG of Goals
 
-Status: `draft-v0.1`
+Status: `draft-v0.2`
 
-This document is the implementation contract for the first DeepSeek Harness plugin slice. It is intentionally narrower than the long-term vision: anything not listed as implemented below is deferred rather than silently approximated.
+This document is the implementation contract for the Agentic CI slice of DeepSeek Harness. DoG is a verification structure, not a development structure: it defines what must be verified, how failures propagate, and how verification runs in parallel isolated workspaces. Development agents are explicitly outside DoG and interact with it only through bound artifacts (in) and verification reports (out).
 
 ## 1. Problem and invariants
 
-DoG represents a non-formal root objective as a directed acyclic graph of goals. A graph contains hierarchical goal membership and explicit cross-goal dependencies. In v0.1, a leaf is complete only when its independently bound verifier passes an immutable artifact snapshot; a composite is complete only when its required parent relations and restricted completion expression settle successfully.
+DoG represents a non-formal root objective as a directed acyclic graph of goals. A graph contains hierarchical goal membership and explicit cross-goal dependencies. A leaf is complete only when its independently bound verifier settles with evidence; a composite is complete only when its required parent relations and restricted completion expression settle successfully. Verification is agentic by default: leaves whose condition cannot be checked by a deterministic command are verified by an isolated Verifier Agent against a Verifier Contract.
 
 The implementation must preserve these invariants:
 
 1. A graph is acyclic over the union of containment and dependency edges.
 2. A node may be shared by multiple composite goals. No algorithm may assume one parent.
 3. Failure tolerance belongs to a parent-child relation, not to the shared child. Each incoming relation is evaluated independently.
-4. A verifier never accepts a path, command, verifier name, scope, or snapshot selected by the producer of the artifact or by a model-authored evidence object.
-5. Every successful verification is bound to an immutable artifact snapshot and an immutable acceptance plan. A later artifact version cannot inherit an earlier pass.
+4. A verifier never accepts a path, command, verifier name, scope, snapshot, or grounding material selected by the producer of the artifact or by a model-authored evidence object. Grounding material is extracted by host-registered trusted extractors.
+5. Every successful verification is bound to an immutable artifact snapshot, a verifier contract version, and a grounding-material digest. A later artifact version inherits an earlier pass only if a programmatic extractor proves the grounding material and contract are unchanged.
 6. The root goal is always a hard constraint. Hard constraints are not compensable by soft-goal scores; an explicitly allowed `partial_success` remains distinct from `success`.
 7. Root execution has honest terminal states, including `failure`, `infeasible`, `cancelled`, and `needs_replan`; the engine never fabricates success or waits forever for an impossible goal.
 8. Boolean completion expressions are parsed and type-checked into a restricted AST. No `eval`, dynamic import, shell command, or arbitrary expression interpreter is allowed.
 9. Human review is a normal terminal/control transition, not an exception hidden inside a retry loop.
 10. Runtime context is diagnostic metadata, never verifier evidence. Failure to persist it may emit a bounded warning but cannot convert a failed verification into a pass or a pass into a failure.
+11. Every verification execution is assumed impure. No verifier — built-in, registered, or agent-driven — is trusted to be side-effect free. Every verification runs in a mutually exclusive isolated workspace provided by the host; writes are confined to the workspace, and the only result channel is the host-captured verification record.
+12. DoG does not own development work. Development agents submit artifacts through host-bound artifact IDs; DoG consumes immutable snapshots and produces machine-readable reports. There is no merge: DoG never merges, never owns a worktree, and never accepts a parent-owned merge, now or later.
+13. Incremental verification is decided only by a programmatically extracted grounding-material digest with its verifier contract version. Graph edges are never used to decide revalidation. Verifications declared non-programmatic are never incremental: every fresh artifact export re-runs them unconditionally.
 
-## 2. Scope of v0.1
+## 2. Scope of v0.2
 
-### Implemented in the first plugin slice
+### Implemented in this plugin slice
 
 - Parse and validate a JSON DoG graph.
 - Validate containment/dependency references, duplicate IDs, acyclicity, expression references, and parent-edge semantics.
-- Compile a graph into an immutable acceptance plan.
+- Compile a graph into an immutable acceptance plan, including verifier contract binding and grounding extractor binding.
 - Capture a content-addressed snapshot of a bounded local artifact file.
-- Run trusted, built-in atomic verifiers against the system-bound snapshot.
-- Evaluate composite completion rules through a restricted Boolean AST.
+- Run trusted verifier contracts: deterministic atomic checks and agentic Verifier Agent sessions, both inside mutually exclusive isolated workspaces.
+- Extract grounding material programmatically via host-registered extractors and compare digests for incremental revalidation.
 - Recompute every affected upstream composite independently for every incoming parent edge.
-- Persist graph definitions, execution records, artifact manifests, verification records, and append-only per-goal runtime events under the active DSH home.
+- Persist graph definitions, execution records, artifact manifests, verification records, grounding-material digests, and append-only per-goal runtime events under the active DSH home.
 - Preserve the invoking DSH tool-call ID and Agent/session ID on each run when that context exists.
-- Expose model-facing tools for graph creation, validation, deterministic verification, and status inspection.
+- Expose model-facing tools for graph creation, validation, verification, status inspection, and agent responsibility binding.
 - Register and dispose all DSH tool effects through the normal Cordis plugin lifecycle.
 - Expose a read-only WebUI graph debugger over the trusted DSH Connection RPC, with a compact snapshot plus lazy per-goal runtime traces and canonical session navigation.
 
-### Deferred; must not be faked by v0.1
+### Out of scope; explicitly not DoG, not deferred
 
-- Agent/session execution of goal work.
-- LLM-generated or LLM-based verifiers.
-- Git worktree creation and parent-owned semantic merge.
+- Agent/session execution of development work. DoG never executes goal work; development is performed by independent agents outside DoG.
+- Git worktree creation, parent-owned semantic merge, and any merge policy. DoG merges nothing and never will. Isolated verification workspaces are execution environments, not merge targets.
+- Development-side parallel decomposition. It is a separate subsystem to be designed later; it will not use the DoG structure.
+
+### Deferred; must not be faked by v0.2
+
+- Parallel verification scheduler details (pool allocation, reuse, backpressure) beyond the isolation contract; v0.2 may run verification sequentially while keeping per-run workspace isolation.
+- Event-triggered runs (watch mode: artifact commit or file change triggers `dog_run`).
+- Machine-readable CI report export beyond the bounded `dog_status` response.
+- Grounding extractor library breadth (renderers, XML/geometry, AST/token extractors are host-registered trusted implementations; v0.2 ships the file-content extractor).
+- Verification Agent re-check / voting strategies (N independent verifications of the same goal to guard against single-point misjudgement).
 - Dynamic graph planning and recursive graph construction.
 - Mutating WebUI controls and streaming event transport.
 - Arbitrary user-defined verifier code or shell commands.
 - External artifact stores and distributed workers.
 - Automatic retries and degradation execution policies.
 
-The deferred features may consume the v0.1 persisted records later, but cannot weaken their trust or version rules.
+The deferred features may consume the v0.2 persisted records later, but cannot weaken their trust or version rules.
 
 ## 3. Core vocabulary
 
 - **Goal**: a node whose desired condition is represented by a verifier and/or a composition of child outcomes.
-- **Leaf goal**: a goal with no containment children. In v0.1 it must have a trusted atomic verifier binding.
-- **Composite goal**: a goal with one or more containment children and a completion rule. v0.1 evaluates that rule only and rejects composite verifier fields rather than silently ignoring them.
+- **Leaf goal**: a goal with no containment children. In v0.2 it must have a verifier contract binding (deterministic atomic check, agentic Verifier Agent, or a host-embedded combination).
+- **Composite goal**: a goal with one or more containment children and a completion rule. v0.2 evaluates that rule only and rejects composite verifier fields rather than silently ignoring them.
 - **Containment edge**: `parent contains child`; it contributes the child's outcome to the parent's completion rule.
-- **Dependency edge**: `source depends_on target`; target must be complete before source may be evaluated. It carries data/version dependencies but does not automatically make the target a containment child.
-- **Parent relation**: the semantic object formed by one containment edge. It owns tolerance, requiredness, degradation policy, and merge policy for that particular parent-child use.
-- **Acceptance plan**: a system-compiled, immutable binding of a goal to a verifier version, target artifact snapshot, exact scope, fixed parameters, and evidence schema.
+- **Dependency edge**: `source depends_on target`; target must have settled before source is scheduled. It is a verification gate, never a development scheduling edge, and never participates in incremental revalidation.
+- **Parent relation**: the semantic object formed by one containment edge. It owns tolerance, requiredness, and degradation policy for that particular parent-child use. It owns no merge policy: merge does not exist.
+- **Verifier contract**: an immutable, versioned binding of a verification task to its requirement (natural-language check instructions), evidence schema, allowed tool set, and grounding declaration. It is authored by the graph/planner, never by the artifact producer.
+- **Verifier Agent**: a context-isolated DSH session that executes one Verifier Contract against a bound snapshot inside an isolated workspace. It receives the contract and the immutable snapshot read-only; it produces a settlement plus evidence satisfying the evidence schema. Its context never contains the development agent's reasoning, prompts, or process.
+- **Grounding material (GM)**: the minimal set of material such that, given it alone and the contract requirement, the goal can be judged. Declared as `programmatic` with a host-registered extractor (a deterministic function from the artifact snapshot to normalized GM) or as `non_programmatic`.
+- **Grounding-material digest (`gmDigest`)**: a content-addressed hash of the normalized GM. It is the only key used for incremental revalidation.
+- **Isolated workspace**: a mutually exclusive, host-allocated execution environment for one verification: the immutable snapshot is read-only input, the workspace is the only writable area, and the outside world is inaccessible. Workspaces are never shared, never merged, and their contents are discarded on completion.
+- **Acceptance plan**: a system-compiled, immutable binding of a goal to a verifier contract version, target artifact snapshot, exact scope, fixed parameters, grounding extractor, and evidence schema.
 - **Artifact snapshot**: an immutable, content-addressed byte representation of the exact file or artifact revision inspected by a verifier.
-- **Evidence**: verifier-produced observations. Evidence is descriptive output, never authorization to choose what gets verified.
+- **Evidence**: verifier-produced observations satisfying the contract's evidence schema. Evidence is descriptive output, never authorization to choose what gets verified.
 - **Affected upstream**: every composite reachable through reverse containment or dependency edges from a changed node; recomputation follows all paths, not one selected parent.
 
 ## 4. Graph representation
 
-The external representation is JSON-compatible YAML if a future authoring layer wants YAML. v0.1 tools accept JSON values; no JavaScript is evaluated while parsing a graph.
+The external representation is JSON-compatible YAML if a future authoring layer wants YAML. v0.2 tools accept JSON values; no JavaScript is evaluated while parsing a graph.
 
 ```json
 {
-  "schemaVersion": "0.1",
+  "schemaVersion": "0.2",
   "id": "ppt-quality",
   "root": "root",
   "nodes": {
@@ -80,7 +96,8 @@ The external representation is JSON-compatible YAML if a future authoring layer 
       "constraint": "hard",
       "completion": { "op": "all", "items": [
         { "op": "ref", "id": "file" },
-        { "op": "ref", "id": "readable" }
+        { "op": "ref", "id": "readable" },
+        { "op": "ref", "id": "page3-fig2-overlap" }
       ] }
     },
     "file": {
@@ -96,11 +113,23 @@ The external representation is JSON-compatible YAML if a future authoring layer 
       "constraint": "soft",
       "verifier": { "id": "file.non_empty", "version": "1" },
       "verifierParams": { "artifactId": "deck" }
+    },
+    "page3-fig2-overlap": {
+      "kind": "leaf",
+      "title": "Page 3 figure 2 has no text occlusion",
+      "constraint": "hard",
+      "verifier": { "id": "vision.overlap", "version": "1" },
+      "verifierParams": {
+        "artifactId": "deck",
+        "target": "Page 3, figure 2",
+        "requirement": "Detect text blocks overlapping to illegibility inside the figure"
+      }
     }
   },
   "contains": [
     { "parent": "root", "child": "file", "required": true, "failure": "fatal" },
-    { "parent": "root", "child": "readable", "required": true, "failure": "tolerable" }
+    { "parent": "root", "child": "readable", "required": true, "failure": "tolerable" },
+    { "parent": "root", "child": "page3-fig2-overlap", "required": true, "failure": "fatal" }
   ],
   "dependsOn": []
 }
@@ -110,10 +139,10 @@ The external representation is JSON-compatible YAML if a future authoring layer 
 
 - `kind`: `leaf` or `composite`.
 - `title`: non-empty human-readable goal statement.
-- `constraint`: `hard` or `soft`. The root must be `hard`; v0.1 records non-root softness but does not invent a soft-score model.
+- `constraint`: `hard` or `soft`. The root must be `hard`; v0.2 records non-root softness but does not invent a soft-score model.
 - `completion`: restricted AST, required for composites with children.
-- `verifier`: a registry identifier and version only. It is not a module path, command, or model-supplied function.
-- `verifierParams`: declarative parameters checked by the registry for the selected verifier. Parameters are copied into the acceptance plan before execution. The graph may refer to a host-bound `artifactId`, but may not select a filesystem root, path, command, or verifier implementation.
+- `verifier`: a Verifier Contract identifier and version only. It is not a module path, command, or model-supplied function.
+- `verifierParams`: declarative parameters checked by the contract registry for the selected contract. Parameters are copied into the acceptance plan before execution. The graph may refer to a host-bound `artifactId` and may supply task-specific targets/requirements, but may not select a filesystem root, path, command, tool set, or verifier implementation.
 
 A leaf cannot declare a completion expression. A composite cannot be evaluated as complete while a required dependency is unresolved. Unknown fields are rejected in strict mode to prevent hidden execution directives.
 
@@ -122,7 +151,8 @@ A leaf cannot declare a completion expression. A composite cannot be evaluated a
 - `required`: whether this child reference participates in the parent's required completion contract.
 - `failure`: `fatal`, `tolerable`, or `degrade`. This is interpreted only by this parent relation.
 - `degradeTo`: optional approved node ID used when `failure=degrade`; it must be a sibling relation explicitly present in the graph.
-- `merge`: `none`, `parent`, or `human`. v0.1 accepts only `none`; later worktree execution may use parent-owned merge.
+
+There is no `merge` field. A graph that contains `merge` is rejected: merge is not part of DoG and never will be.
 
 A shared child can therefore be fatal for one parent and tolerable for another. The child itself has no global `tolerable` flag.
 
@@ -130,8 +160,8 @@ Degradation applies only after the direct child settles as a failure. It never c
 
 ### Dependency fields
 
-- `source` cannot be evaluated before `target` reaches a terminal outcome allowed by the source's policy.
-- `data`: optional list of named output fields to bind in a later version. v0.1 records the relation but does not execute arbitrary data expressions.
+- `source` cannot be scheduled before `target` reaches a terminal outcome allowed by the source's policy. This is a verification gate only; it does not constrain development agents and does not participate in incremental revalidation.
+- `data`: optional list of named output fields to bind in a later version. v0.2 records the relation but does not execute arbitrary data expressions.
 - Dependencies must not create a cycle with containment edges.
 
 ## 5. Restricted completion AST
@@ -166,8 +196,8 @@ Before execution, the system/compiler—not the producer—creates an acceptance
 
 ```json
 {
-  "goalId": "file",
-  "verifierId": "file.exists",
+  "goalId": "page3-fig2-overlap",
+  "verifierId": "vision.overlap",
   "verifierVersion": "1",
   "artifactId": "deck",
   "rootBindingId": "workspace",
@@ -180,86 +210,121 @@ Before execution, the system/compiler—not the producer—creates an acceptance
     "sha256": "..."
   },
   "scope": { "kind": "file", "artifactId": "deck" },
-  "params": { "artifactId": "deck" },
-  "evidenceSchemaId": "file.exists/v1"
+  "params": { "artifactId": "deck", "target": "Page 3, figure 2", "requirement": "..." },
+  "grounding": { "kind": "programmatic", "extractorId": "slides.page3.render", "schema": "slides.page3.render/v1" },
+  "evidenceSchemaId": "vision.overlap/v1",
+  "gmDigest": "sha256:..."
 }
 ```
 
 The host configuration, not the graph producer, maps `artifactId` to a root binding and relative path. The plan is deep-frozen in memory and persisted with those fields and an explicit file scope. The system resolves that mapping, canonicalizes the resulting path, and checks it against the approved root before snapshot capture. A path supplied in a child output or evidence object is ignored and cannot override the plan.
+
+The grounding declaration is part of the Verifier Contract and cannot be overridden by `verifierParams` or by any model-authored object. A contract declared `non_programmatic` has no extractor and is always revalidated.
 
 ### 6.2 Snapshot lifecycle
 
 1. The system resolves the host-bound artifact ID to its configured root and relative path.
 2. It reads the bytes itself and computes a SHA-256 digest.
 3. It writes or reuses an immutable content-addressed snapshot.
-4. The verifier reads only that snapshot and the fixed plan parameters.
-5. The verification record stores the snapshot ID and verifier version.
+4. It runs the registered grounding extractor against the snapshot and computes the GM digest.
+5. The verifier reads only that snapshot (read-only), the fixed plan parameters, and its isolated workspace.
+6. The verification record stores the snapshot ID, verifier contract version, and GM digest.
 
 If the live file changes after capture, the record remains valid for the old snapshot but cannot be used to claim the new version passed. A new run must compile a new plan/snapshot.
 
 ### 6.3 Evidence rules
 
-- Evidence is generated by the trusted verifier implementation.
-- Evidence cannot select `verifierId`, path, command, scope, or snapshot.
-- v0.1 verifiers are direct library functions; they do not execute child-provided commands and do not accept executable test source.
-- A pass requires a verifier-specific result with a non-empty, schema-valid observation and the exact input snapshot ID.
+- Evidence is generated by the trusted verifier implementation (deterministic check) or by the Verifier Agent under the contract's evidence schema.
+- Evidence cannot select `verifierId`, path, command, scope, snapshot, extractor, or GM.
+- A Verifier Agent's bare assertion is never sufficient. A settlement is one of:
+  - `pass`: the agent produced evidence satisfying the evidence schema and the requirement;
+  - `fail`: the agent produced evidence showing the defect;
+  - `inconclusive`: no valid evidence could be produced, or the agent's confidence is below threshold. `inconclusive` is neither pass nor fail; it enters `needs_human` (or a deferred re-check policy).
+- A pass requires a contract-specific result with a non-empty, schema-valid observation and the exact input snapshot ID.
 - A generic `{ "passed": true }` object is never sufficient.
 - A verifier that does not inspect the bound snapshot or cannot produce its declared observation fails closed.
-- Verification records are append-only; a later record supersedes an earlier record only when it names a different run and snapshot.
+- Verification records are append-only; a later record supersedes an earlier record only when it names a different run and snapshot. A record may be reused (inherited) only when the GM digest and contract version of the current plan match the record's.
 
 Future custom verifiers require explicit registry installation and trusted code review. A graph cannot register one by naming a file, package, URL, or command.
 
-## 7. Trusted atomic verifier registry
+## 7. Verifier Contract registry
 
 Each registry entry declares:
 
 ```ts
-interface AtomicVerifierSpec {
+interface VerifierContract {
   id: string
   version: string
-  paramsSchema: DeclarativeSchema
+  requirement: string              // natural-language check instructions
+  paramsSchema: DeclarativeSchema  // artifactId + task-specific targets/requirements
   evidenceSchemaId: string
-  verify(snapshot: ArtifactSnapshot, params: unknown): AtomicResult
+  allowedTools: readonly string[]  // host-registered tool IDs (render, OCR, geometry, ...)
+  grounding: { kind: "programmatic", extractorId: string, schema: string }
+           | { kind: "non_programmatic" }
+  execute(workspace: IsolatedWorkspace, snapshot: ArtifactSnapshot, params: unknown, agent?: VerifierAgent): Promise<Settlement>
 }
 ```
 
-The registry owns parameter validation, target selection, and evidence construction. The first entries are:
+The registry owns parameter validation, target selection, and evidence construction. Two execution kinds exist:
 
-- `file.exists/v1`: exact bound file has a readable snapshot with non-zero metadata.
-- `file.non_empty/v1`: exact bound snapshot byte length is greater than zero.
-- `file.sha256/v1`: snapshot digest equals a fixed expected digest.
-- `text.includes/v1`: UTF-8 snapshot contains a fixed expected string; invalid UTF-8 fails.
+- **Deterministic atomic checks** (`file.exists/v1`, `file.non_empty/v1`, `file.sha256/v1`, `text.includes/v1`): trusted library functions run by the host inside the isolated workspace. They may also be used by a Verifier Agent as tools.
+- **Agentic contracts** (`vision.overlap/v1` and similar): executed by a context-isolated Verifier Agent that receives the contract, the read-only snapshot, and the allowed tool set inside an isolated workspace. The agent cannot modify the requirement, evidence schema, tool set, extractor, or its own task.
 
-These are intentionally narrow. PPT-specific XML/rendering verifiers will be added only after their snapshot format, scope, and independent evidence contract are specified.
+Grounding extractors are host-registered trusted implementations, never graph-supplied. The v0.2 bundled extractor is file-content (`file.content/v1`: normalized bytes of the bound snapshot). PPT rendering/geometry and code AST/token extractors are host-registered work items.
+
+Isolation is mandatory for every entry. No verifier contract may declare itself side-effect free; workspaces are allocated per verification, and access outside the workspace fails closed.
 
 ## 8. Status and terminal semantics
 
 ### Node states
 
-`pending`, `running`, `success`, `failure`, `blocked`, `needs_human`, `cancelled`, `invalidated`, `partial`.
+`pending`, `running`, `success`, `failure`, `blocked`, `needs_human`, `cancelled`, `invalidated`, `partial`, `inherited`.
 
-A successful leaf verification record carries the run ID, graph digest, artifact ID, snapshot ID, verifier version, and bounded observation. Composite results carry their state and reason. v0.1 does not claim separate dependency-output hashes because it executes no producer work; the graph digest plus immutable snapshot IDs are its complete reuse boundary.
+`inherited` is a success-equivalent result reused from a prior run only when the current plan's GM digest and contract version match the prior verification record.
+
+A successful leaf verification record carries the run ID, graph digest, artifact ID, snapshot ID, verifier contract version, GM digest, and bounded observation. Composite results carry their state and reason.
 
 ### Runtime context
 
-Every run may carry an invocation record containing the `dog_run` tool-call ID, the invoking DSH Agent/session ID when one exists, its direct parent session ID when the invocation came from a subagent, and its timestamp. Each evaluated goal writes a bounded append-only event sequence: goal start, dependency block, verifier start/pass/fail, composite evaluation, structured runtime error, and final settlement. Events include only operational identifiers, state, bounded reasons/errors, verifier identity, attempt number, and duration. They do not copy prompts, assistant reasoning, raw tool transcripts, artifact bytes, credentials, or verifier observations.
+Every run may carry an invocation record containing the `dog_run` tool-call ID, the invoking DSH Agent/session ID when one exists, its direct parent session ID when the invocation came from a subagent, and its timestamp. Each evaluated goal writes a bounded append-only event sequence: goal start, dependency block, verifier start/pass/fail, grounding extraction, isolated workspace allocation, composite evaluation, structured runtime error, and final settlement. Events include only operational identifiers, state, bounded reasons/errors, verifier identity, attempt number, and duration. They do not copy prompts, assistant reasoning, raw tool transcripts, artifact bytes, credentials, or verifier observations.
 
-The debugger loads this trace only after a user selects a run and goal. A running node is therefore distinguishable from a merely pending node, and a failed node exposes the exact runtime stage and structured error category. If an invoking Agent/session ID is still known to the DSH runtime, the UI navigates through the canonical session service so the user can inspect that session's normal conversation and tool history. Ordinary sessions must still be present in the canonical session list; addressed subagents require their recorded direct parent to refresh into a healthy catalog route. The debugger closes only after the canonical session selection reports the target as current; unavailable or unconfirmed targets leave it open with an explicit error. DoG never implements a second transcript reader.
+The debugger loads this trace only after a user selects a run and goal. A running node is therefore distinguishable from a merely pending node, and a failed node exposes the exact runtime stage and structured error category. If an invoking Agent/session ID is still known to the DSH runtime, the UI navigates through the canonical session service so the user can inspect that session's normal conversation and tool history. Ordinary sessions must still be present in the canonical session list; addressed subagents require their recorded direct parent to refresh into a healthy catalog route. The debugger closes only after the canonical session selection reports the target as current; unavailable or unconfirmed targets leave it open with an explicit error.
 
-Runtime-event persistence is explicitly outside the acceptance boundary: trusted evidence remains the immutable `VerificationRecord` generated by the registered verifier. A runtime log write failure is recorded as a bounded run warning and does not alter the verification verdict.
+Runtime-event persistence is explicitly outside the acceptance boundary: trusted evidence remains the immutable `VerificationRecord` generated by the verifier contract execution. A runtime log write failure is recorded as a bounded run warning and does not alter the verification verdict.
 
 ### Root terminal states
 
 - `success`: the restricted root completion expression is true and every required parent relation succeeds directly or through its declared degradation target.
-- `partial_success`: the root is `partial` and deployment explicitly sets `allowPartialRoot`; v0.1 has no independent soft-score threshold.
+- `partial_success`: the root is `partial` and deployment explicitly sets `allowPartialRoot`; v0.2 has no independent soft-score threshold.
 - `failure`: a non-tolerable required relation fails, the root completion expression settles false under fatal policy, or partial root delivery is disabled.
 - `infeasible`: the declared conditions cannot be met under available artifacts or capabilities.
-- `needs_replan`: the graph or goal contract must change before execution can continue.
+- `needs_replan`: the verification contract must change (requirement, evidence schema, grounding extractor, or graph) before verification can continue. This is a contract adjustment signal, not a development-plan rework signal.
 - `cancelled`: human or policy ended execution; partial records remain inspectable.
 
 `needs_human` is an active control state, not a root success/failure claim. Human decisions may retry, edit the graph, approve a degradation allowed by the graph, or terminate. No decision is represented as an automatic pass.
 
-## 9. Shared-node propagation and parent-owned merge
+## 9. Parallel scheduling, incremental revalidation, and propagation
+
+### 9.1 Isolation and parallel scheduling
+
+Every verification owns one mutually exclusive isolated workspace. No side-effect-free assumption is made about any verifier; a verifier may create temporary files, build caches, or render snapshots — all confined to its workspace. Parallelism is therefore safe by construction: read sets are immutable snapshots; write sets are per-workspace; nothing is shared, and nothing is merged.
+
+The scheduler maintains readiness by dependency gates. Each ready verification claims a workspace from the pool (pool size ≤ `maxConcurrentVerifications`) and executes. A failure propagates as a result settlement; it never cancels unrelated ready nodes. Verification continues until every non-gated node has settled, maximizing the evidence collected in a run.
+
+### 9.2 Incremental revalidation
+
+Before scheduling a fresh run, the host:
+
+1. runs the registered grounding extractor for every programmatic leaf against the new snapshot;
+2. computes each GM digest;
+3. for leaves whose GM digest and verifier contract version equal the prior run's record, marks the prior result `inherited` (success or failure both carry over; they are facts, not re-verifications);
+4. leaves whose GM changed, and all `non_programmatic` leaves, are re-run unconditionally.
+
+Graph edges never decide revalidation. A change to an artifact that alters no leaf's GM causes no re-run for that leaf, even though its containing composite still evaluates.
+
+If the number of re-run leaves exceeds `revalidateThreshold` (as a configured ratio of leaves; `0` disables), the report includes an explicit warning to the development agent that the submission touched unrelated parts (e.g. a global template change re-triggering every page of a deck).
+
+### 9.3 Propagation
 
 A node result is immutable and may feed multiple parents. After any result changes, the engine:
 
@@ -270,32 +335,26 @@ A node result is immutable and may feed multiple parents. After any result chang
 5. continues until a fixed point or a human/terminal boundary;
 6. recomputes the root from all affected paths.
 
-There is no single `getParent()` operation.
-
-When future work produces worktree candidates, the parent composite owns merge:
-
-1. collect candidate artifact references from its direct children;
-2. perform the configured merge policy in the parent's workspace;
-3. capture a new post-merge snapshot;
-4. rerun all parent acceptance plans whose scope intersects the merged artifact;
-5. publish the merged artifact only after the parent-level checks settle.
-
-A child cannot merge another child's worktree, and a pass from a pre-merge snapshot cannot authorize a post-merge artifact.
+There is no single `getParent()` operation. Failure settlement and scheduling are decoupled: propagation is about results; scheduling is about maximizing completed verification.
 
 ## 10. Lifecycle
 
-The full DoG lifecycle is below. In v0.1, coverage review and human review are external control points; the plugin deterministically compiles, verifies, persists, and surfaces `needs_replan` rather than pretending to run an autonomous reviewer.
+The full DoG lifecycle is below. In v0.2, coverage review and human review are external control points; the plugin compiles, selects, verifies, recomputes, and reports rather than pretending to run an autonomous reviewer.
 
-1. `draft`: author or planner supplies a graph.
-2. `coverage_review`: an independent reviewer checks that the root objective, hard constraints, required artifacts, and obvious failure modes are represented. It may reject the draft; it cannot silently add goals.
-3. `compile`: validate graph, resolve trusted verifier IDs, bind artifact scope, capture snapshots, and assign a graph revision.
-4. `execute`: v0.1 only evaluates pre-existing artifacts; later versions execute child work.
-5. `verify`: trusted verifiers produce records against fixed snapshots.
-6. `recompute`: propagate results along every affected upstream path.
-7. `human_review`: pause on root hard failure, uncertainty, coverage rejection, budget anomaly, or policy-required review.
-8. `terminal`: persist an honest root terminal state and report evidence.
+1. `draft`: author or planner supplies a graph of verification goals.
+2. `coverage_review`: an independent, context-isolated reviewer checks that the root objective, hard constraints, required artifacts, and obvious failure modes are represented. It may reject the draft; it cannot silently add goals.
+3. `compile`: validate graph, resolve trusted Verifier Contract IDs, bind artifact scope, capture snapshots, bind grounding extractors, and assign a graph revision.
+4. `capture`: consume the developer's submitted artifact as an immutable snapshot at the DoG work boundary — the only input channel from the development side.
+5. `revalidate_select`: extract grounding material, compare GM digests, and partition leaves into re-run set and inherited set.
+6. `verify`: schedule verifier contracts (deterministic or agentic) in isolated workspaces, bounded by the concurrency limit.
+7. `recompute`: propagate results along every affected upstream path.
+8. `human_review`: pause on root hard failure, uncertainty (`inconclusive`), coverage rejection, budget anomaly, or policy-required review.
+9. `report`: package the terminal state, evidence summaries, inherited results, and threshold warnings into a machine-readable report for the development agent or external CI.
+10. `terminal`: persist an honest root terminal state and report evidence.
 
-Coverage review and future LLM verification must use a context-isolated session. The isolated reviewer receives the original objective, the candidate graph, and explicit review rules—not the producer's private reasoning or self-authored test instructions.
+Coverage review and Verifier Agents use context-isolated sessions. The isolated reviewer receives the original objective, the candidate graph, and explicit review rules—not the producer's private reasoning or self-authored test instructions. The Verifier Agent receives only the contract and the immutable snapshot—never the development agent's reasoning.
+
+Development agents are not scheduled by DoG. They consume reports (e.g. via `dog_bind_agent` responsibility/subscription binding) and submit new artifacts; failure notification is a report, not a command.
 
 ## 11. Persistence
 
@@ -303,29 +362,31 @@ By default the plugin stores under `$DSH_HOME/dog/` (the directory name is confi
 
 - `graphs/<graph-digest>.json`: immutable compiled graph revisions and acceptance plans;
 - `graph-index/<host-safe-graph-key>.json`: latest-revision lookup for a graph ID; the indexed digest must be a lower-case SHA-256 value before it is used as a filename;
-- `runs/<host-safe-run-key>.json`: execution state and terminal result;
+- `runs/<host-safe-run-key>.json`: execution state, terminal result, and per-leaf GM digests;
 - `artifacts/<snapshot-key>.bin|json`: immutable snapshot bytes and manifest;
-- `verifications/<host-safe-run-key>.jsonl`: append-only trusted verifier results;
+- `verifications/<host-safe-run-key>.jsonl`: append-only trusted verifier results (snapshot ID + contract version + GM digest);
 - `runtime-events/<run-key>-<goal-key>.jsonl`: append-only diagnostic activity and structured errors, sharded per goal so lazy inspection never scans another goal's events.
 
 Writes use temporary files plus atomic rename for snapshots and append-only records for event streams. Records contain schema versions and never contain credentials, prompts, raw transcripts, or artifact bytes outside the content-addressed artifact store. A status read returns metadata and bounded error/evidence fields; it does not dump arbitrary session context.
 
-## 12. DSH plugin surface in v0.1
+## 12. DSH plugin surface in v0.2
 
 Package: `@dsh-external/dsh-dog`.
 
 The host plugin registers these model-facing tools through `ctx.tools`:
 
 - `dog_validate`: parse and statically validate a graph without writing it.
-- `dog_create`: validate, compile, resolve only host-bound artifact IDs, snapshot those artifacts, and persist a graph revision.
-- `dog_run`: evaluate the trusted verifiers for a stored graph run and recompute all affected upstream nodes.
-- `dog_status`: return a bounded graph/run status and verification evidence.
+- `dog_create`: validate, compile, resolve only host-bound artifact IDs, snapshot those artifacts, bind grounding extractors, and persist a graph revision.
+- `dog_run`: run the revalidate-select step, schedule trusted verification for all ready goals in isolated workspaces, and recompute all affected upstream nodes.
+- `dog_status`: return a bounded graph/run status and verification evidence as a CI-consumable report.
+- `dog_bind_agent`: bind a DSH Agent session's responsibility/subscription to one goal in an existing DoG run (notification on failure; never scheduling of execution).
+- `dog_delegate_agent`: start a durable continuable DSH Agent bound to one goal; the child remains directly interactive after its first turn. The role is orchestrator, verifier, or reviewer.
 
-All tool arguments cross a model boundary and are validated. Model-authored graphs may reference only artifact IDs predeclared by host configuration; they cannot supply artifact roots or paths. The tools do not spawn shell commands.
+All tool arguments cross a model boundary and are validated. Model-authored graphs may reference only artifact IDs predeclared by host configuration; they cannot supply artifact roots, paths, commands, tool sets, or verifier implementations. The tools do not spawn shell commands.
 
 The plugin exports `name`, `Config`, `inject`, and `apply` according to the DSH loader contract. `apply` registers effects with disposers and fails loudly for invalid configuration or missing required services.
 
-The web profile registers a client bundle in the shipped `shell.overlay` slot and a trusted-host channel on the shared DSH Connection RPC. The compact `snapshot` endpoint returns a schema-validated projection of persisted graph revisions and runs; the lazy `goal-runtime` endpoint returns one bounded per-goal trace only after node selection. Neither endpoint returns artifact bytes, prompts, raw session transcripts, or credentials. The client polls the compact snapshot, renders containment and dependency edges, exposes node contracts, live runtime activity, structured failure reasons, and trusted verifier evidence, and can ask the canonical DSH sessions service to open the invoking session. It is intentionally read-only: graph mutation and execution remain model-facing tool operations in v0.1.
+The web profile registers a client bundle in the shipped `shell.overlay` slot and a trusted-host channel on the shared DSH Connection RPC. The compact `snapshot` endpoint returns a schema-validated projection of persisted graph revisions and runs; the lazy `goal-runtime` endpoint returns one bounded per-goal trace only after node selection. Neither endpoint returns artifact bytes, prompts, raw session transcripts, or credentials. The client polls the compact snapshot, renders containment and dependency edges, exposes node contracts, live runtime activity, structured failure reasons, and trusted verifier evidence, and can ask the canonical DSH sessions service to open the invoking session. It is intentionally read-only: graph mutation and execution remain model/CLI-side.
 
 ## 13. Configuration
 
@@ -340,28 +401,37 @@ maxExpressionNodes: 512
 maxExpressionDepth: 64
 maxSnapshotBytes: 67108864
 allowPartialRoot: false
+maxConcurrentVerifications: 1   # isolated workspace pool size; >1 enables parallel scheduling
+revalidateThreshold: 0.3        # ratio of leaves re-run before warning the developer; 0 disables
+gmDigestAlgo: "sha256"
 ```
 
-`artifactRoots` and `artifactBindings` are host-authored configuration, validated at plugin load, and are the only source of target paths. No model-authored graph can override them or introduce a new binding. A future permission integration may add user approval for new roots; v0.1 rejects them.
+`artifactRoots` and `artifactBindings` are host-authored configuration, validated at plugin load, and are the only source of target paths. No model-authored graph can override them or introduce a new binding. A future permission integration may add user approval for new roots; v0.2 rejects them.
 
 ## 14. Security and failure policy
 
-- Reject traversal, absolute paths outside approved roots, symlink escapes, duplicate IDs or dependency edges, cycles, self-degradation, unknown verifier IDs, malformed schemas, and oversized snapshots.
+- Reject traversal, absolute paths outside approved roots, symlink escapes, duplicate IDs or dependency edges, cycles, self-degradation, unknown verifier IDs, malformed schemas, oversized snapshots, and any `merge` field.
 - Never use `eval`, `new Function`, dynamic imports from graph data, or shell interpolation.
+- Isolated workspaces are mandatory for every verification; out-of-workspace access fails closed.
 - Redact credentials from errors and persisted evidence.
 - Treat all model-authored graph fields, executor output, and evidence as untrusted data.
 - On storage or snapshot mismatch, fail closed and require a new run.
-- On a cost or timeout anomaly in future execution phases, enter `needs_human`; do not silently lower verification standards.
+- On a cost or timeout anomaly, enter `needs_human`; do not silently lower verification standards.
+- A Verifier Agent may not be granted tools outside the contract's `allowedTools`; tool grants are host-registered, not model-supplied.
 
 ## 15. Explicitly deferred design decisions
 
 The following remain open until a benchmark or real DSH integration supplies evidence:
 
-- retry strategy and cost-aware scheduling;
-- worktree allocation and conflict resolution details;
-- LLM verifier calibration and voting;
+- scheduler policy details (workspace pool sizing, allocation and reuse);
+- event-triggered watch mode;
+- CI report export format beyond the bounded status response;
+- grounding extractor library breadth (renderers, XML/geometry, code AST);
+- Verifier Agent re-check / voting calibration against hallucinated evidence;
 - mutating WebUI controls, streaming transport, and very-large-graph virtualization;
 - dynamic planning and graph migration;
 - GitHub template repository format.
+
+Development-side parallel decomposition is explicitly NOT DoG and will not appear here.
 
 Changes to this document must be committed separately from implementation changes when possible. The commit history is the record of which parts of the design changed because the implementation exposed an unrealistic assumption.
