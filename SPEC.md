@@ -341,16 +341,19 @@ There is no single `getParent()` operation. Failure settlement and scheduling ar
 
 The full DoG lifecycle is below. In v0.2, coverage review and human review are external control points; the plugin compiles, selects, verifies, recomputes, and reports rather than pretending to run an autonomous reviewer.
 
-1. `draft`: author or planner supplies a graph of verification goals.
+1. `draft`: the human project owner states the non-formal objective and acceptance criteria. A planning agent (orchestrator) decomposes that into a graph of verification goals; it does not develop, does not verify, and does not run CI. The graph is durable: it changes only when the human owner's objective changes.
 2. `coverage_review`: an independent, context-isolated reviewer checks that the root objective, hard constraints, required artifacts, and obvious failure modes are represented. It may reject the draft; it cannot silently add goals.
-3. `compile`: validate graph, resolve trusted Verifier Contract IDs, bind artifact scope, capture snapshots, bind grounding extractors, and assign a graph revision.
-4. `capture`: consume the developer's submitted artifact as an immutable snapshot at the DoG work boundary — the only input channel from the development side.
-5. `revalidate_select`: extract grounding material, compare GM digests, and partition leaves into re-run set and inherited set.
-6. `verify`: schedule verifier contracts (deterministic or agentic) in isolated workspaces, bounded by the concurrency limit.
-7. `recompute`: propagate results along every affected upstream path.
-8. `human_review`: pause on root hard failure, uncertainty (`inconclusive`), coverage rejection, budget anomaly, or policy-required review.
-9. `report`: package the terminal state, evidence summaries, inherited results, and threshold warnings into a machine-readable report for the development agent or external CI.
-10. `terminal`: persist an honest root terminal state and report evidence.
+3. `confirm`: the human owner accepts the reviewed graph. From this point the graph is a fixed verification standard; the developer cannot modify it, and CI cannot redefine it.
+4. `compile`: validate graph, resolve trusted Verifier Contract IDs, bind artifact scope, capture snapshots, bind grounding extractors, and assign a graph revision.
+5. `capture`: consume the developer's submitted artifact as an immutable snapshot at the DoG work boundary — the only input channel from the development side.
+6. `revalidate_select`: extract grounding material, compare GM digests, and partition leaves into re-run set and inherited set.
+7. `verify`: schedule verifier contracts (deterministic or agentic) in isolated workspaces, bounded by the concurrency limit.
+8. `recompute`: propagate results along every affected upstream path.
+9. `human_review`: pause on root hard failure, uncertainty (`inconclusive`), coverage rejection, budget anomaly, or policy-required review.
+10. `report`: package the terminal state, evidence summaries, inherited results, and threshold warnings into a machine-readable report for the development agent or external CI.
+11. `terminal`: persist an honest root terminal state and report evidence.
+
+The developer's tool surface is limited to `dog_run` and `dog_status` plus the artifact bind path. It has no `dog_create`/`dog_validate`: whoever may edit the graph defines what counts as passing, so graph authors must never be artifact producers.
 
 Coverage review and Verifier Agents use context-isolated sessions. The isolated reviewer receives the original objective, the candidate graph, and explicit review rules—not the producer's private reasoning or self-authored test instructions. The Verifier Agent receives only the contract and the immutable snapshot—never the development agent's reasoning.
 
@@ -433,5 +436,35 @@ The following remain open until a benchmark or real DSH integration supplies evi
 - GitHub template repository format.
 
 Development-side parallel decomposition is explicitly NOT DoG and will not appear here.
+
+## 16. Worked example: deck quality gate
+
+Task: produce `deck.pptx` for a 10-page demo. Acceptance stated by the human owner: every page readable, no text occlusion, no truncation, information complete.
+
+### 16.1 Roles and ownership
+
+| Role | Side | Input | Output |
+|---|---|---|---|
+| Human project owner | outside | — | non-formal objective + acceptance criteria |
+| Planning agent (orchestrator) | CI side, once | objective + material + contract catalog | graph JSON (via `dog_create`) |
+| Coverage reviewer | CI side, once | objective + graph + review rules (isolated) | approve / reject |
+| Development agent | outside | objective, CI reports | artifact at the bind path; `dog_run` / `dog_status` calls |
+| Verifier Agent | CI side, per run | contract + immutable snapshot (isolated, allowed tools only) | pass / fail / inconclusive + evidence |
+| DoG runner (host) | CI side | artifact snapshot | run records + machine-readable report |
+
+The developer cannot build or edit the graph: its tool surface is `dog_run` + `dog_status` + the artifact bind path only.
+
+### 16.2 Sequence
+
+1. `draft`: owner states the objective; planning agent decomposes it. Leaves include `renderable` (deterministic `render.probe`, GM = rendered bytes of all pages), `page3-fig2-overlap` (agentic `vision.overlap`, GM = page-3 layout boxes + screenshot), `page7-truncation` (agentic `vision.truncation`, GM = page-7 render), `brand-consistency` (agentic `vision.brand`, declared `non_programmatic`). `page3-fig2-overlap` and `page7-truncation` depend on `renderable` (verification gate).
+2. `coverage_review` → approved; `confirm` → owner accepts; `compile` → `dog_create` fixes the contract set and the snapshot scope.
+3. Developer writes `deck.pptx` to the bind path and calls `dog_run` (both required to trigger CI).
+4. `capture` takes an immutable snapshot; `revalidate_select` finds no history in run 1 → all leaves re-run; `brand-consistency` always re-runs.
+5. `verify`: `renderable` runs first in an isolated workspace; once it settles, the gated leaf Verifier Agents run in parallel, each in its own workspace, each receiving only the contract and the read-only snapshot.
+6. Run 1 result: `renderable` pass, `page7-truncation` pass, `page3-fig2-overlap` fail (evidence: title box intersects figure 2 by 14%, OCR confirms covered text), `brand-consistency` inconclusive → `needs_human`. Failure settles upstream (`page3`, then `root`) while unrelated leaves keep running — failure settlement never cancels scheduling of unrelated nodes.
+7. `report` returns `dog_run` summary (`runId`, `rootState: failure`, failed/inconclusive lists) and `dog_status` full evidence (screenshot reference, geometry, OCR text) to the developer.
+8. Developer fixes only page 3, re-submits, calls `dog_run`. Run 2 `revalidate_select` recomputes GM: only `page3-*` changed → others `inherited` (zero Verifier Agent cost), `page3-fig2-overlap` re-runs and passes → `rootState: success`.
+9. Alternative scenario: the developer changes the global theme to fix page 3 — every page GM changes, 20/20 re-run exceeds `revalidateThreshold`, and the report warns: "this submission re-runs all pages; revert the template change if the fix is page-3-only."
+10. Objective change later → the owner and planning agent re-draft a new graph; the old revision is a fixed historical standard and its records keep their meaning.
 
 Changes to this document must be committed separately from implementation changes when possible. The commit history is the record of which parts of the design changed because the implementation exposed an unrealistic assumption.
