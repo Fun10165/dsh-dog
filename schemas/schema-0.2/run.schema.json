@@ -93,6 +93,9 @@
     "updatedAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "runtimeWarning": {
+      "type": "string"
     }
   },
   "$defs": {

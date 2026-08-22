@@ -221,7 +221,10 @@ export async function verifyAcceptancePlan(
     throw new Error(`acceptance plan grounding mismatch for ${plan.goalId}`)
   }
   const result = await spec.execute(workspace, plan.snapshot, params, reader)
-  if (!isNonEmptyJsonObject(result.observation)) {
+  if (result.state !== 'inconclusive' && !isNonEmptyJsonObject(result.observation)) {
+    throw new Error(`trusted verifier ${plan.verifierId}@${plan.verifierVersion} returned invalid evidence`)
+  }
+  if (result.state !== 'inconclusive' && !result.observation) {
     throw new Error(`trusted verifier ${plan.verifierId}@${plan.verifierVersion} returned invalid evidence`)
   }
   return result
