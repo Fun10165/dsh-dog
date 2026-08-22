@@ -86,6 +86,7 @@ export class DogEngine {
   private readonly now: () => Date
   private readonly nextRunId: () => string
   private readonly hostArtifacts: HostArtifactConfig
+  private readonly backgroundTasks = new Set<Promise<void>>()
 
   /** Install a replacement verifier registry (e.g. host wires an agentic runner once subagents are live). */
   setVerifierRegistry(registry: VerifierContractRegistry): void {
@@ -177,24 +178,41 @@ export class DogEngine {
   /** Asynchronous run: returns after the initial record is persisted; verification continues in background. */
   async startRun(graphId: string, options: DogRunOptions = {}): Promise<DogRun> {
     const prepared = await this.prepareRun(graphId, options)
-    const background = new AbortController().signal
-    void this.executeRun(prepared, { ...options, signal: background }).catch(async cause => {
-      try {
-        const live = await this.repository.loadRun(prepared.runId)
-        if (live.state === 'running') {
-          await this.repository.saveRun({
-            ...live,
-            state: 'failed',
-            rootState: 'failure',
-            runtimeWarning: `background execution failed: ${boundedMessage(messageOf(cause))}`,
-            updatedAt: this.now().toISOString(),
-          })
-        }
-      } catch {
-        // best-effort failure marking; the original error is the authoritative record
-      }
-    })
+    this.enqueueBackground(prepared, options)
     return prepared.initial
+  }
+
+  /** Execute a prepared run on the engine's process-level loop, independent of any caller session. */
+  private enqueueBackground(
+    prepared: { compiled: CompiledGraph; runId: string; initial: DogRun },
+    options: DogRunOptions,
+  ): void {
+    const task = this.executeRun(prepared, { ...options, signal: new AbortController().signal })
+      .then(() => undefined)
+      .catch(async cause => {
+        try {
+          const live = await this.repository.loadRun(prepared.runId)
+          if (live.state === 'running') {
+            await this.repository.saveRun({
+              ...live,
+              state: 'failed',
+              rootState: 'failure',
+              runtimeWarning: `background execution failed: ${boundedMessage(messageOf(cause))}`,
+              updatedAt: this.now().toISOString(),
+            })
+          }
+        } catch {
+          // best-effort failure marking; the original error is the authoritative record
+        }
+        this.backgroundTasks.delete(task)
+      })
+    void task.finally(() => this.backgroundTasks.delete(task))
+    this.backgroundTasks.add(task)
+  }
+
+  /** Wait for every in-flight background run (host shutdown). */
+  async drainBackground(): Promise<void> {
+    await Promise.allSettled([...this.backgroundTasks])
   }
 
   private async prepareRun(graphId: string, options: DogRunOptions): Promise<{ compiled: CompiledGraph; runId: string; initial: DogRun }> {
