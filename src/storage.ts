@@ -84,13 +84,19 @@ export class DogRepository implements SnapshotReader {
     return readCompiledGraph(this.rootPath, index.graphDigest)
   }
 
-  /** Enumerate every immutable graph revision available to the debugger. */
+  /** Enumerate immutable graph revisions. Pre-v0.2 records (no grounding/gmDigest contract) are skipped, not deleted. */
   async listGraphs(): Promise<readonly CompiledGraph[]> {
     await this.initialize()
     const entries = await readdir(join(this.rootPath, 'graphs'), { withFileTypes: true })
-    const graphs = await Promise.all(entries
-      .filter(entry => entry.isFile() && /^[a-f0-9]{64}\.json$/u.test(entry.name))
-      .map(entry => readCompiledGraph(this.rootPath, entry.name.slice(0, -'.json'.length))))
+    const graphs: CompiledGraph[] = []
+    for (const entry of entries) {
+      if (!entry.isFile() || !/^[a-f0-9]{64}\.json$/u.test(entry.name)) continue
+      try {
+        graphs.push(await readCompiledGraph(this.rootPath, entry.name.slice(0, -'.json'.length)))
+      } catch (error) {
+        if (!String(error instanceof Error ? error.message : error).startsWith('invalid persisted graph record')) throw error
+      }
+    }
     return graphs.sort((left, right) => {
       const byId = left.input.id.localeCompare(right.input.id)
       return byId === 0 ? left.graphDigest.localeCompare(right.graphDigest) : byId
@@ -147,25 +153,26 @@ export class DogRepository implements SnapshotReader {
     return matches[0]
   }
 
-  /** Enumerate persisted run snapshots, newest update first. */
+  /** Enumerate persisted run snapshots, newest update first. Pre-v0.2 records are skipped. */
   async listRuns(): Promise<readonly DogRun[]> {
     await this.initialize()
     const entries = await readdir(join(this.rootPath, 'runs'), { withFileTypes: true })
-    const runs = await Promise.all(entries
-      .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
-      .map(async (entry) => {
-        const run = await readJson<DogRun>(join(this.rootPath, 'runs', entry.name))
-        if (
-          typeof run.runId !== 'string'
-          || run.runId.length === 0
-          || typeof run.graphId !== 'string'
-          || !isDigest(run.graphDigest)
-          || entry.name !== `${safeKey(run.runId)}.json`
-        ) {
-          throw new Error(`invalid persisted run record ${entry.name}`)
-        }
-        return run
-      }))
+    const runs: DogRun[] = []
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+      const key = entry.name.slice(0, -'.json'.length)
+      if (!/^[a-f0-9]{64}$/u.test(key)) continue
+      try {
+        const record = readJson<DogRun>(join(this.rootPath, 'runs', `${key}.json`))
+        const run = await record
+        if (this.schema !== undefined && !this.schema.validateRun(run)) continue
+        if (typeof run.runId !== 'string' || run.runId.length === 0 || entry.name !== `${safeKey(run.runId)}.json`) continue
+        if (!isDigest(run.graphDigest)) continue
+        runs.push(run)
+      } catch {
+        continue
+      }
+    }
     return runs.sort((left, right) => {
       const byTime = right.updatedAt.localeCompare(left.updatedAt)
       return byTime === 0 ? left.runId.localeCompare(right.runId) : byTime

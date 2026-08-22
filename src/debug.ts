@@ -31,8 +31,10 @@ export async function buildDogDebugSnapshot(
 ): Promise<DogDebugSnapshot> {
   const [graphs, runs] = await Promise.all([repository.listGraphs(), repository.listRuns()])
   const graphIds = [...new Set(graphs.map(graph => graph.input.id))]
-  const currentDigests = new Set((await Promise.all(graphIds.map(id => repository.loadGraph(id))))
-    .map(graph => graph.graphDigest))
+  const settled = await Promise.allSettled(graphIds.map(id => repository.loadGraph(id)))
+  const currentDigests = new Set(settled
+    .filter((result): result is PromiseFulfilledResult<CompiledGraph> => result.status === 'fulfilled')
+    .map(result => result.value.graphDigest))
   const revisions = graphs.map(graph => ({
     graph,
     current: currentDigests.has(graph.graphDigest),
