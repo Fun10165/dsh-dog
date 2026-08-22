@@ -170,6 +170,7 @@ describe.sequential('DoG Cordis plugin', () => {
       await new Promise(resolve => setTimeout(resolve, 200))
     }
     expect(statusValue).toBeDefined()
+    if (statusValue === undefined) throw new Error('run did not settle within the polling window')
 
     const bind = await ctx.tools.execute({
       callId: CallId('bind'),
