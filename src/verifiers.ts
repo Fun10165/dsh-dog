@@ -22,6 +22,23 @@ export interface IsolatedWorkspace {
   readonly path: string
 }
 
+/** Host-supplied execution environment for one verification turn. */
+export interface VerifierExecutionEnv {
+  readonly parent?: unknown
+  readonly signal?: AbortSignal
+}
+
+/** Runner that executes one agentic Verifier Contract with an isolated worker session. */
+export interface AgenticVerifierRunner {
+  run(input: {
+    readonly contract: VerifierContract
+    readonly plan: AcceptancePlan
+    readonly workspace: IsolatedWorkspace
+    readonly parent: unknown
+    readonly signal: AbortSignal
+  }): Promise<Settlement>
+}
+
 export interface VerifierContract {
   readonly id: string
   readonly version: string
@@ -37,6 +54,7 @@ export interface VerifierContract {
     snapshot: ArtifactSnapshot,
     params: Record<string, JsonValue>,
     reader: SnapshotReader,
+    env?: VerifierExecutionEnv,
   ) => Promise<Settlement>
 }
 
@@ -82,9 +100,7 @@ export class VerifierContractRegistry {
 
 /** Create the v0.2 built-in registry: deterministic atomic contracts (programmatic) + agentic contracts. */
 export function createBuiltinVerifierRegistry(options: {
-  readonly agenticRunner?: {
-    run(contract: VerifierContract, plan: AcceptancePlan, workspace: IsolatedWorkspace, signal: AbortSignal): Promise<Settlement>
-  }
+  readonly agenticRunner?: AgenticVerifierRunner
 } = {}): VerifierContractRegistry {
   const registry = new VerifierContractRegistry()
   const fileGrounding = {
@@ -173,21 +189,29 @@ export function createBuiltinVerifierRegistry(options: {
     allowedTools: ['render', 'ocr', 'geometry'],
     grounding: { kind: 'non_programmatic' },
     validateParams: paramsWithTargetRequirement,
-    execute: async (workspace, snapshot, params, _reader) => {
+    execute: async (workspace, snapshot, params, _reader, env) => {
       if (options.agenticRunner === undefined) return { state: 'inconclusive', observation: {} }
-      return options.agenticRunner.run(registry.get('vision.overlap', '1'), {
+      const contract = registry.get('vision.overlap', '1')
+      const plan: AcceptancePlan = {
         goalId: 'verification',
-        verifierId: 'vision.overlap',
-        verifierVersion: '1',
+        verifierId: contract.id,
+        verifierVersion: contract.version,
         artifactId: params.artifactId as string,
         rootBindingId: '',
         relativePath: '',
         snapshot,
         scope: { kind: 'file', artifactId: params.artifactId as string },
         params,
-        grounding: { kind: 'non_programmatic' },
-        evidenceSchemaId: 'vision.overlap/v1',
-      }, workspace, new AbortController().signal)
+        grounding: contract.grounding,
+        evidenceSchemaId: contract.evidenceSchemaId,
+      }
+      return options.agenticRunner.run({
+        contract,
+        plan,
+        workspace,
+        parent: env?.parent,
+        signal: env?.signal ?? new AbortController().signal,
+      })
     },
   })
   return registry
@@ -199,6 +223,7 @@ export async function verifyAcceptancePlan(
   registry: VerifierContractRegistry,
   reader: SnapshotReader,
   workspace: IsolatedWorkspace,
+  env?: VerifierExecutionEnv,
 ): Promise<Settlement> {
   const spec = registry.get(plan.verifierId, plan.verifierVersion)
   const params = spec.validateParams(plan.params)
@@ -220,7 +245,7 @@ export async function verifyAcceptancePlan(
   } else if (plan.grounding.kind !== 'non_programmatic') {
     throw new Error(`acceptance plan grounding mismatch for ${plan.goalId}`)
   }
-  const result = await spec.execute(workspace, plan.snapshot, params, reader)
+  const result = await spec.execute(workspace, plan.snapshot, params, reader, env)
   if (result.state !== 'inconclusive' && !isNonEmptyJsonObject(result.observation)) {
     throw new Error(`trusted verifier ${plan.verifierId}@${plan.verifierVersion} returned invalid evidence`)
   }

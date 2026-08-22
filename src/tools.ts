@@ -74,6 +74,7 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
               parentSessionId: String(exec.agent.session.header.parentSession),
             }),
           },
+          ...(exec.agent === undefined ? {} : { agent: exec.agent }),
         })
         exec.signal.throwIfAborted()
         return jsonResult(runSummary(run))

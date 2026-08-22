@@ -46,6 +46,7 @@ export interface DogRunOptions {
     readonly parentSessionId?: string
   }
   readonly signal?: AbortSignal
+  readonly agent?: unknown
 }
 
 export interface DogBindAgentOptions {
@@ -78,12 +79,17 @@ const GOAL_AGENT_ROLES = new Set<GoalAgentRole>(['orchestrator', 'verifier', 're
 export class DogEngine {
   private readonly config: DogConfig
   private readonly repository: DogRepository
-  private readonly verifiers: VerifierContractRegistry
+  private verifiers: VerifierContractRegistry
   private readonly extractors: GroundingExtractorRegistry
   private readonly workspaces: WorkspaceManager
   private readonly now: () => Date
   private readonly nextRunId: () => string
   private readonly hostArtifacts: HostArtifactConfig
+
+  /** Install a replacement verifier registry (e.g. host wires an agentic runner once subagents are live). */
+  setVerifierRegistry(registry: VerifierContractRegistry): void {
+    this.verifiers = registry
+  }
 
   constructor(options: DogEngineOptions) {
     validateHostConfig(options.config)
@@ -319,7 +325,10 @@ export class DogEngine {
           artifactId: plan.artifactId,
         }
         await appendRuntimeEvent(goalId, 'verifier_started', { state: 'running', verifier, attempt: 1 })
-        const settled = await verifyAcceptancePlan(plan, this.verifiers, this.repository, workspace)
+        const settled = await verifyAcceptancePlan(plan, this.verifiers, this.repository, workspace, {
+          parent: options.agent,
+          signal,
+        })
         const verdict: GoalState = settled.state === 'pass' ? 'success' : settled.state === 'fail' ? 'failure' : 'needs_human'
         const record: VerificationRecord = {
           schemaVersion: '0.1',
