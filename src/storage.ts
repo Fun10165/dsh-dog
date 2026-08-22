@@ -1,6 +1,7 @@
 /** Host-bound artifact snapshots and durable DoG records. */
 
 import { createHash } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { appendFile, lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
@@ -454,7 +455,7 @@ async function atomicWriteJson(path: string, value: unknown): Promise<void> {
 }
 
 async function atomicWrite(path: string, value: string | Uint8Array): Promise<void> {
-  const temporary = `${path}.tmp-${process.pid}-${Date.now()}`
+  const temporary = `${path}.tmp-${process.pid}-${randomUUID()}`
   await writeFile(temporary, value)
   await rename(temporary, path)
 }

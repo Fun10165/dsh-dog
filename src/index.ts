@@ -13,8 +13,9 @@ import { loadSchemaSet } from './schema.ts'
 import { DogRepository } from './storage.ts'
 import { createDogDelegateAgentTool, createDogTools } from './tools.ts'
 import { WorkspaceManager } from './workspace.ts'
-import { createBuiltinVerifierRegistry, type AgenticVerifierRunner, type Settlement, type VerifierContract } from './verifiers.ts'
-import type { AcceptancePlan, JsonValue } from './model.ts'
+import { createBuiltinVerifierRegistry, type AgenticVerifierRunner, type VerifierContract } from './verifiers.ts'
+import type { AcceptancePlan } from './model.ts'
+import { waitForSettlement } from './verifier-file.ts'
 
 export { DogEngine } from './core.ts'
 export {
@@ -103,36 +104,34 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         const bytes = await repository.read(plan.snapshot)
         const inputPath = join(workspace.path, `${plan.artifactId}.bin`)
         await writeFile(inputPath, bytes)
-        const run = await subagents.start(config.subagentProvider, {
+        const resultPath = join(workspace.path, 'settlement.json')
+        const parentSessionId = readSessionId(parent)
+        const started = await subagents.startContinuable({
+          provider: config.subagentProvider,
           label: `verifier ${contract.id}@${contract.version}`,
-          prompt: [{ type: 'text', text: buildVerifierPrompt(contract, plan, inputPath) }],
-          parent: parent as never,
+          request: {
+            prompt: [{ type: 'text', text: buildVerifierPrompt(contract, plan, inputPath, resultPath) }],
+            parent,
+            maxDepth: config.subagentMaxDepth,
+          },
           signal,
-          outputSchema: VERIFIER_OUTPUT_SCHEMA as never,
-        } as never)
-        try {
-          const parentSessionId = readSessionId(parent)
-          if (runId !== undefined && parentSessionId.length > 0) {
+        })
+        const sessionId = String(started.childId)
+        if (runId !== undefined && parentSessionId.length > 0) {
+          try {
             await engine.bindAgent({
               runId,
               goalId: plan.goalId,
               role: 'verifier',
-              sessionId: String(run.id),
+              sessionId,
               parentSessionId,
             })
+          } catch (bindingError) {
+            await writeFile(join(workspace.path, 'binding-warning.txt'), String(bindingError))
           }
-        } catch (bindingError) {
-          const warning = String(bindingError).slice(0, 512)
-          const result = await run.result
-          const structured = result.structured as unknown
-          const settlement = parseSettlement(structured)
-          if (settlement.state === 'inconclusive') {
-            return { state: 'inconclusive', observation: { bindingWarning: warning } }
-          }
-          return settlement
         }
-        const result = await run.result
-        return parseSettlement(result.structured as unknown)
+        const settlement = await waitForSettlement(resultPath, signal, 900_000)
+        return { state: settlement.state, observation: settlement.observation }
       },
     }
     engine.setVerifierRegistry(createBuiltinVerifierRegistry({ agenticRunner }))
@@ -167,20 +166,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 }
 
 interface HostContinuableSubagents {
-  start(provider: string, spec: {
-    readonly label?: string
-    readonly prompt: readonly { readonly type: 'text'; readonly text: string }[]
-    readonly parent: unknown
-    readonly signal: AbortSignal
-    readonly outputSchema?: unknown
-  }): Promise<{
-    readonly id: unknown
-    readonly result: Promise<{
-      readonly structured?: unknown
-      readonly output: readonly unknown[]
-      readonly stopReason: string
-    }>
-  }>
   startContinuable(spec: {
     readonly provider: string
     readonly label: string
@@ -194,17 +179,7 @@ interface HostContinuableSubagents {
   interrupt(sessionId: string, authority: { readonly kind: 'ancestor'; readonly agent: unknown }): void
 }
 
-const VERIFIER_OUTPUT_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['settlement', 'observation'],
-  properties: {
-    settlement: { type: 'string', enum: ['pass', 'fail', 'inconclusive'] },
-    observation: { type: 'object' },
-  },
-} as const
-
-function buildVerifierPrompt(contract: VerifierContract, plan: AcceptancePlan, inputPath: string): string {
+function buildVerifierPrompt(contract: VerifierContract, plan: AcceptancePlan, inputPath: string, resultPath: string): string {
   const requirement = typeof plan.params.requirement === 'string'
     ? plan.params.requirement
     : contract.requirement
@@ -219,39 +194,11 @@ function buildVerifierPrompt(contract: VerifierContract, plan: AcceptancePlan, i
     'You may write scratch files inside your present working directory only. Never touch other paths.',
     'Produce structured evidence: your observation must state what you actually measured or saw',
     '(boxes, areas, OCR text, measurements). You cannot claim a pass or fail without evidence.',
+    `Write your settlement to this exact absolute path (use a write/bash tool): ${resultPath}`,
+    'It must be a JSON object: {"settlement": "pass"|"fail"|"inconclusive", "observation": {...}}.',
+    'After writing the file, reply with exactly "verification done".',
     'If the material cannot be inspected or you cannot decide, report settlement "inconclusive".',
   ].join('\n')
-}
-
-function parseSettlement(value: unknown): Settlement {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return { state: 'inconclusive', observation: {} }
-  const raw = value as Record<string, unknown>
-  const settlement = raw.settlement
-  if (settlement !== 'pass' && settlement !== 'fail' && settlement !== 'inconclusive') {
-    return { state: 'inconclusive', observation: {} }
-  }
-  const observation = raw.observation
-  if (observation === null || typeof observation !== 'object' || Array.isArray(observation)) {
-    return { state: settlement, observation: { settled: settlement } }
-  }
-  const record: Record<string, JsonValue> = {}
-  for (const [key, item] of Object.entries(observation)) {
-    if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean' || item === null) {
-      record[key] = item as JsonValue
-    } else if (Array.isArray(item) || typeof item === 'object') {
-      if (isJsonValueLike(item)) record[key] = item as JsonValue
-    }
-  }
-  if (Object.keys(record).length === 0) record.settled = settlement
-  return { state: settlement, observation: record }
-}
-
-function isJsonValueLike(value: unknown): boolean {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
-  if (typeof value === 'number') return Number.isFinite(value)
-  if (Array.isArray(value)) return value.every(isJsonValueLike)
-  if (typeof value !== 'object') return false
-  return Object.values(value).every(isJsonValueLike)
 }
 
 /** Read the durable session id from a host-provided agent object without trusting an unchecked shape. */

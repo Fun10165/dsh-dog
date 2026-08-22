@@ -28,6 +28,7 @@ import type {
 import { DogRepository, captureArtifactSnapshot, type CapturedArtifact, type HostArtifactConfig } from './storage.ts'
 import { VerifierContractRegistry, createBuiltinVerifierRegistry, verifyAcceptancePlan } from './verifiers.ts'
 import { WorkspaceManager } from './workspace.ts'
+import type { IsolatedWorkspace } from './verifiers.ts'
 
 export interface DogEngineOptions {
   readonly config: DogConfig
@@ -313,13 +314,14 @@ export class DogEngine {
       if (plan === undefined) {
         return { state: 'needs_human', reason: 'compiled acceptance plan is missing' }
       }
-      const startedAt = this.now().toISOString()
-      goals[goalId] = { state: 'running' }
-      await appendRuntimeEvent(goalId, 'goal_started', { at: startedAt, state: 'running' })
-      await saveProgress(startedAt)
-      const workspace = await this.workspaces.acquire()
-      await appendRuntimeEvent(goalId, 'workspace_allocated', { state: 'running', attempt: 1 })
+      let workspace: IsolatedWorkspace | undefined
       try {
+        const startedAt = this.now().toISOString()
+        goals[goalId] = { state: 'running' }
+        await appendRuntimeEvent(goalId, 'goal_started', { at: startedAt, state: 'running' })
+        await saveProgress(startedAt)
+        workspace = await this.workspaces.acquire()
+        await appendRuntimeEvent(goalId, 'workspace_allocated', { state: 'running', attempt: 1 })
         const verifier = {
           id: plan.verifierId,
           version: plan.verifierVersion,
@@ -369,10 +371,12 @@ export class DogEngine {
           stage: 'verification',
           message: boundedMessage(messageOf(cause)),
         }
+        const failed: GoalResult = { state: 'needs_human', reason: error.message }
         await appendRuntimeEvent(goalId, 'structured_error', { state: 'needs_human', reason: error.kind })
-        return { state: 'needs_human', reason: error.message }
+        goals[goalId] = failed
+        return failed
       } finally {
-        await this.workspaces.release(workspace)
+        if (workspace !== undefined) await this.workspaces.release(workspace)
       }
     }
 
