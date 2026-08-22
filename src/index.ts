@@ -119,7 +119,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
             prompt: [{ type: 'text', text: buildVerifierPrompt(contract, plan, inputPath, resultPath, rendered.pages) }],
             parent,
             maxDepth: config.subagentMaxDepth,
-            toolFilter: { deny: ['bash'] },
           },
           signal,
         })
@@ -213,7 +212,9 @@ function buildVerifierPrompt(
     `Verification task: ${requirement}`,
     `Target region: ${target}`,
     `Artifact file (read-only content): ${inputPath}`,
-    `Allowed tools: ${contract.allowedTools.join(', ') || 'none'} (shell execution is disabled)`,
+    `Allowed tools: ${contract.allowedTools.join(', ') || 'none'}`,
+    'Shell commands are allowed BUT only while the working directory is the artifact workspace; never touch any path outside it',
+    '(especially the host project /Users/fun10165 and other mounts). Write files only inside the workspace directory.',
     ...(renderedPages.length === 0
       ? ['WARNING: no page renders are available; inspect the OOXML structure instead.']
       : [
