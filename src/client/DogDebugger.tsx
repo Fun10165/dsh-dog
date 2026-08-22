@@ -936,6 +936,8 @@ function runtimeEventLabel(phase: GoalRuntimeEvent['phase']): string {
     case 'verifier_inconclusive': return 'Verifier inconclusive'
     case 'composite_evaluated': return 'Completion rule evaluated'
     case 'result_inherited': return 'Result inherited from prior run'
+    case 'verifier_released': return 'Verifier worker released'
+    case 'verifier_bind_failed': return 'Verifier worker binding failed'
     case 'structured_error': return 'Runtime error'
     case 'goal_settled': return 'Goal settled'
     case 'run_warning': return 'Run warning'

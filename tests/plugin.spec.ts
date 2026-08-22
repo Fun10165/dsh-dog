@@ -11,6 +11,7 @@ import { Config, apply, inject } from '../src/index.ts'
 import { DogEngine } from '../src/core.ts'
 import {
   DOG_BIND_AGENT_TOOL,
+  DOG_CANCEL_TOOL,
   DOG_CREATE_TOOL,
   DOG_DELEGATE_AGENT_TOOL,
   DOG_RUN_TOOL,
@@ -88,7 +89,7 @@ function candidateGraph(): DogGraphInput {
 }
 
 describe.sequential('DoG Cordis plugin', () => {
-  it('registers exactly five model tools and removes them on fiber disposal', async () => {
+  it('registers exactly six model tools and removes them on fiber disposal', async () => {
     const home = await temporaryRoot()
     const workspace = await temporaryRoot()
     process.env.DSH_HOME = home
@@ -97,6 +98,7 @@ describe.sequential('DoG Cordis plugin', () => {
     const fiber = await ctx.plugin({ inject, apply }, config)
     expect(ctx.tools.schemas().map(tool => tool.name).sort()).toEqual([
       DOG_BIND_AGENT_TOOL,
+      DOG_CANCEL_TOOL,
       DOG_CREATE_TOOL,
       DOG_RUN_TOOL,
       DOG_STATUS_TOOL,

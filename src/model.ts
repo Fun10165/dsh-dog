@@ -188,6 +188,8 @@ export type GoalRuntimePhase =
   | 'verifier_inconclusive'
   | 'composite_evaluated'
   | 'result_inherited'
+  | 'verifier_released'
+  | 'verifier_bind_failed'
   | 'structured_error'
   | 'goal_settled'
   | 'run_warning'

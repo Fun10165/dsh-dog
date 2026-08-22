@@ -96,6 +96,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const schema = await loadSchemaSet()
   const repository = new DogRepository(dshHomePath(config.storageDirectory), schema)
   const engine = new DogEngine({ config, repository, workspaces: new WorkspaceManager() })
+  void engine.reapOrphanRuns().catch(() => undefined)
   for (const tool of createDogTools(engine)) ctx.effect(() => ctx.tools.register(tool))
   ctx.inject(['subagents'], (subagentCtx) => {
     const subagents = (subagentCtx as unknown as { readonly subagents: HostContinuableSubagents }).subagents
@@ -113,6 +114,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
             prompt: [{ type: 'text', text: buildVerifierPrompt(contract, plan, inputPath, resultPath) }],
             parent,
             maxDepth: config.subagentMaxDepth,
+            toolFilter: { deny: ['bash'] },
           },
           signal,
         })
@@ -127,10 +129,19 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
               parentSessionId,
             })
           } catch (bindingError) {
-            await writeFile(join(workspace.path, 'binding-warning.txt'), String(bindingError))
+            await engine.annotateRun(runId, `verifier binding failed for ${plan.goalId}: ${String(bindingError).slice(0, 300)}`)
+            await engine.recordVerifierLifecycle(runId, plan.goalId, 'verifier_bind_failed', sessionId, String(bindingError))
           }
         }
         const settlement = await waitForSettlement(resultPath, signal, 900_000)
+        if (runId !== undefined && parentSessionId.length > 0) {
+          try {
+            subagents.interrupt(sessionId, { kind: 'ancestor', agent: parent })
+            await engine.recordVerifierLifecycle(runId, plan.goalId, 'verifier_released', sessionId)
+          } catch (releaseError) {
+            await engine.annotateRun(runId, `verifier release failed for ${plan.goalId}: ${String(releaseError).slice(0, 300)}`)
+          }
+        }
         return { state: settlement.state, observation: settlement.observation }
       },
     }
@@ -173,6 +184,7 @@ interface HostContinuableSubagents {
       readonly prompt: { readonly type: 'text'; readonly text: string }[]
       readonly parent: unknown
       readonly maxDepth: number
+      readonly toolFilter?: { readonly deny?: readonly string[]; readonly allow?: readonly string[] }
     }
     readonly signal: AbortSignal
   }): Promise<{ readonly childId: unknown }>
@@ -190,13 +202,14 @@ function buildVerifierPrompt(contract: VerifierContract, plan: AcceptancePlan, i
     `Verification task: ${requirement}`,
     `Target region: ${target}`,
     `Artifact file (read-only content): ${inputPath}`,
-    `Allowed tools: ${contract.allowedTools.join(', ') || 'none'}`,
-    'You may write scratch files inside your present working directory only. Never touch other paths.',
+    `Allowed tools: ${contract.allowedTools.join(', ') || 'none'} (shell execution is disabled)`,
+    'Your ONLY writable location is the directory containing the artifact file; all other paths are forbidden.',
+    'Do not inspect, list, or read anything outside that directory.',
     'Produce structured evidence: your observation must state what you actually measured or saw',
     '(boxes, areas, OCR text, measurements). You cannot claim a pass or fail without evidence.',
-    `Write your settlement to this exact absolute path (use a write/bash tool): ${resultPath}`,
+    `Write your settlement to this exact absolute path with your write tool: ${resultPath}`,
     'It must be a JSON object: {"settlement": "pass"|"fail"|"inconclusive", "observation": {...}}.',
-    'After writing the file, reply with exactly "verification done".',
+    'After writing the file, stop immediately: no further tool calls, no further inspection. Reply only "verification done".',
     'If the material cannot be inspected or you cannot decide, report settlement "inconclusive".',
   ].join('\n')
 }

@@ -324,6 +324,21 @@ Runtime-event persistence is explicitly outside the acceptance boundary: trusted
 
 Every verification owns one mutually exclusive isolated workspace. No side-effect-free assumption is made about any verifier; a verifier may create temporary files, build caches, or render snapshots — all confined to its workspace. Parallelism is therefore safe by construction: read sets are immutable snapshots; write sets are per-workspace; nothing is shared, and nothing is merged.
 
+### 9.1.1 Verifier worker lifecycle
+
+An agentic verifier worker is a continuable child session bound to its goal. Its lifecycle is supervised:
+
+- the child is created with a tool filter that denies shell execution (`bash`), so it cannot inspect or mutate the host project outside its workspace;
+- its prompt declares the artifact path as the only read target, the settlement file path as the only write target, and forbids any tool call after the settlement file is written;
+- as soon as the runner observes the settlement file, it interrupts the child's current turn and records a `verifier_released` lifecycle event; an interrupt failure is a bounded run warning, never a verdict change;
+- a binding failure (see §12) records `verifier_bind_failed` and a bounded run warning instead of failing the verification.
+
+### 9.1.2 Run supervision
+
+- every running run writes a heartbeat (`updatedAt`) at a bounded interval;
+- a run whose heartbeat is older than the orphan threshold is reaped on the next engine start or `dog_run`: it becomes `cancelled` with `rootState: cancelled` and the warning `orphaned: heartbeat expired (host restart or session loss)`;
+- a new run supersedes any prior non-terminal run of the same graph.
+
 The scheduler maintains readiness by dependency gates. Each ready verification claims a workspace from the pool (pool size ≤ `maxConcurrentVerifications`) and executes. A failure propagates as a result settlement; it never cancels unrelated ready nodes. Verification continues until every non-gated node has settled, maximizing the evidence collected in a run.
 
 ### 9.2 Incremental revalidation
@@ -397,12 +412,15 @@ The host plugin registers these model-facing tools through `ctx.tools`:
 
 - `dog_validate`: parse and statically validate a graph without writing it.
 - `dog_create`: validate, compile, resolve only host-bound artifact IDs, snapshot those artifacts, bind grounding extractors, and persist a graph revision.
-- `dog_run`: run the revalidate-select step, schedule trusted verification for all ready goals in isolated workspaces, and recompute all affected upstream nodes.
+- `dog_run`: start the Agentic CI cycle for one graph and return **immediately** with the initial `running` record. The cycle (revalidate-select, parallel verification in isolated workspaces, recompute) executes in the background on the engine's process-level queue with its own abort signal; caller session stop or tool abort does not cancel it. The report is obtained by polling `dog_status`.
 - `dog_status`: return a bounded graph/run status and verification evidence as a CI-consumable report.
+- `dog_cancel`: mark a running run and its verifier workers cancelled with a bounded reason; partial records remain inspectable.
 - `dog_bind_agent`: bind a DSH Agent session's responsibility/subscription to one goal in an existing DoG run (notification on failure; never scheduling of execution).
 - `dog_delegate_agent`: start a durable continuable DSH Agent bound to one goal; the child remains directly interactive after its first turn. The role is orchestrator, verifier, or reviewer.
 
 All tool arguments cross a model boundary and are validated. Model-authored graphs may reference only artifact IDs predeclared by host configuration; they cannot supply artifact roots, paths, commands, tool sets, or verifier implementations. The tools do not spawn shell commands.
+
+Verifier binding semantics: a verifier worker is bound to its goal as role `verifier`. A binding failure is recorded as `verifier_bind_failed` plus a bounded run warning; it never blocks the verification verdict, and the run remains inspectable without the worker link.
 
 The plugin exports `name`, `Config`, `inject`, and `apply` according to the DSH loader contract. `apply` registers effects with disposers and fails loudly for invalid configuration or missing required services.
 
@@ -424,6 +442,8 @@ allowPartialRoot: false
 maxConcurrentVerifications: 1   # isolated workspace pool size; >1 enables parallel scheduling
 revalidateThreshold: 0.3        # ratio of leaves re-run before warning the developer; 0 disables
 gmDigestAlgo: "sha256"
+subagentProvider: "spawn"       # provider that establishes verifier/delegate child sessions
+subagentMaxDepth: 3             # delegation-depth cap for those children
 ```
 
 `artifactRoots` and `artifactBindings` are host-authored configuration, validated at plugin load, and are the only source of target paths. No model-authored graph can override them or introduce a new binding. A future permission integration may add user approval for new roots; v0.2 rejects them.

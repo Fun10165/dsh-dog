@@ -38,6 +38,7 @@ export interface DogEngineOptions {
   readonly workspaces?: WorkspaceManager
   readonly now?: () => Date
   readonly nextRunId?: () => string
+  readonly heartbeatMs?: number
 }
 
 export interface DogRunOptions {
@@ -85,8 +86,10 @@ export class DogEngine {
   private readonly workspaces: WorkspaceManager
   private readonly now: () => Date
   private readonly nextRunId: () => string
+  private readonly heartbeatMs: number
   private readonly hostArtifacts: HostArtifactConfig
   private readonly backgroundTasks = new Set<Promise<void>>()
+  private readonly runStops = new Map<string, () => void>()
 
   /** Install a replacement verifier registry (e.g. host wires an agentic runner once subagents are live). */
   setVerifierRegistry(registry: VerifierContractRegistry): void {
@@ -102,6 +105,7 @@ export class DogEngine {
     this.workspaces = options.workspaces ?? new WorkspaceManager()
     this.now = options.now ?? (() => new Date())
     this.nextRunId = options.nextRunId ?? (() => randomUUID())
+    this.heartbeatMs = options.heartbeatMs ?? 30_000
     this.hostArtifacts = {
       roots: options.config.artifactRoots,
       bindings: options.config.artifactBindings,
@@ -204,6 +208,8 @@ export class DogEngine {
         } catch {
           // best-effort failure marking; the original error is the authoritative record
         }
+        this.runStops.get(prepared.runId)?.()
+        this.runStops.delete(prepared.runId)
         this.backgroundTasks.delete(task)
       })
     void task.finally(() => this.backgroundTasks.delete(task))
@@ -213,6 +219,81 @@ export class DogEngine {
   /** Wait for every in-flight background run (host shutdown). */
   async drainBackground(): Promise<void> {
     await Promise.allSettled([...this.backgroundTasks])
+  }
+
+  /** Persist a bounded run-level warning (verifier binding/release diagnostics). */
+  async annotateRun(runId: string, warning: string): Promise<void> {
+    try {
+      await this.repository.updateRun(runId, current => ({
+        ...current,
+        runtimeWarning: boundedMessage(warning),
+        updatedAt: this.now().toISOString(),
+      }))
+    } catch {
+      // diagnostic annotation must never throw into verification
+    }
+  }
+
+  /** Append a verifier worker lifecycle event (verifier_released / verifier_bind_failed). */
+  async recordVerifierLifecycle(
+    runId: string,
+    goalId: string,
+    phase: 'verifier_released' | 'verifier_bind_failed',
+    _sessionId: string,
+    reason?: string,
+  ): Promise<void> {
+    try {
+      await this.repository.appendRuntimeEvent({
+        schemaVersion: '0.1',
+        runId,
+        goalId,
+        phase,
+        at: this.now().toISOString(),
+        ...(reason === undefined ? {} : { reason: boundedMessage(reason) }),
+        verifier: { id: 'vision.overlap', version: '1', artifactId: goalId },
+      })
+    } catch {
+      // lifecycle diagnostics must never throw into verification
+    }
+  }
+
+  /** Mark every run whose heartbeat expired as cancelled (host restarts, killed sessions). */
+  async reapOrphanRuns(orphanMs = 600_000): Promise<number> {
+    const threshold = this.now().getTime() - orphanMs
+    const runs = await this.repository.listRuns()
+    let reaped = 0
+    for (const prior of runs) {
+      if (prior.state !== 'running') continue
+      const updated = Date.parse(prior.updatedAt)
+      if (!Number.isFinite(updated) || updated >= threshold) continue
+      try {
+        await this.repository.updateRun(prior.runId, current => ({
+          ...current,
+          state: 'cancelled',
+          rootState: 'cancelled',
+          runtimeWarning: 'orphaned: heartbeat expired (host restart or session loss)',
+          updatedAt: this.now().toISOString(),
+        }))
+        reaped++
+      } catch {
+        // keep reaping remaining runs
+      }
+    }
+    return reaped
+  }
+
+  /** Cancel one run and stop its heartbeat; partial records remain inspectable. */
+  async cancelRun(runId: string, reason: string): Promise<DogRun> {
+    this.runStops.get(runId)?.()
+    this.runStops.delete(runId)
+    const updated = await this.repository.updateRun(runId, current => ({
+      ...current,
+      state: 'cancelled',
+      rootState: 'cancelled',
+      runtimeWarning: `cancelled: ${boundedMessage(reason)}`,
+      updatedAt: this.now().toISOString(),
+    }))
+    return updated
   }
 
   private async prepareRun(graphId: string, options: DogRunOptions): Promise<{ compiled: CompiledGraph; runId: string; initial: DogRun }> {
@@ -261,6 +342,16 @@ export class DogEngine {
     const goals: Record<string, GoalResult> = { ...prepared.initial.goals }
     const gmDigests: Record<string, string> = { ...prepared.initial.gmDigests }
     let run: DogRun = prepared.initial
+    let stopHeartbeat = (): void => { }
+    const heartbeat = setInterval(() => {
+      if (run.state !== 'running') {
+        stopHeartbeat()
+        return
+      }
+      void this.repository.saveRun({ ...run, updatedAt: this.now().toISOString() }).catch(() => undefined)
+    }, this.heartbeatMs)
+    stopHeartbeat = () => clearInterval(heartbeat)
+    this.runStops.set(runId, stopHeartbeat)
 
     const appendRuntimeEvent = async (
       goalId: string,
@@ -531,6 +622,8 @@ export class DogEngine {
       updatedAt,
     }
     await this.repository.saveRun(run)
+    stopHeartbeat()
+    this.runStops.delete(runId)
     return deepFreeze(run)
   }
 

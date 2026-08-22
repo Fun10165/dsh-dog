@@ -5,41 +5,95 @@
   "description": "Append-only bounded diagnostic activity; one JSON object per line. Never verifier evidence. Machine-readable counterpart of SPEC §8 + §11.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["runId", "goalId", "phase", "state", "at"],
+  "required": [
+    "runId",
+    "goalId",
+    "phase",
+    "state",
+    "at"
+  ],
   "properties": {
-    "runId": { "$ref": "#/$defs/uuid" },
-    "goalId": { "type": "string", "minLength": 1 },
+    "runId": {
+      "$ref": "#/$defs/uuid"
+    },
+    "goalId": {
+      "type": "string",
+      "minLength": 1
+    },
     "phase": {
       "description": "Operational stage of the goal in this run.",
       "enum": [
-        "goal_started", "dependency_blocked", "grounding_extracted",
-        "workspace_allocated", "verifier_started", "verifier_passed",
-        "verifier_failed", "verifier_inconclusive", "composite_evaluated",
-        "result_inherited", "structured_error", "goal_settled", "run_warning"
+        "goal_started",
+        "dependency_blocked",
+        "grounding_extracted",
+        "workspace_allocated",
+        "verifier_started",
+        "verifier_passed",
+        "verifier_failed",
+        "verifier_inconclusive",
+        "composite_evaluated",
+        "result_inherited",
+        "structured_error",
+        "goal_settled",
+        "run_warning",
+        "verifier_released",
+        "verifier_bind_failed"
       ]
     },
     "state": {
       "description": "Goal state at the moment of the event.",
       "enum": [
-        "pending", "running", "success", "failure", "blocked",
-        "needs_human", "cancelled", "invalidated", "partial", "inherited"
+        "pending",
+        "running",
+        "success",
+        "failure",
+        "blocked",
+        "needs_human",
+        "cancelled",
+        "invalidated",
+        "partial",
+        "inherited"
       ]
     },
     "verifier": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "version"],
+      "required": [
+        "id",
+        "version"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 }
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
-    "attempt": { "type": "integer", "minimum": 1 },
-    "durationMs": { "type": "integer", "minimum": 0 },
-    "reason": { "type": "string" },
-    "errorCategory": { "type": "string" },
-    "gmDigest": { "$ref": "#/$defs/sha256" },
-    "at": { "type": "string", "format": "date-time" }
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reason": {
+      "type": "string"
+    },
+    "errorCategory": {
+      "type": "string"
+    },
+    "gmDigest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    }
   },
   "$defs": {
     "uuid": {

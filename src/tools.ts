@@ -21,6 +21,7 @@ export const DOG_RUN_TOOL = 'dog_run'
 export const DOG_BIND_AGENT_TOOL = 'dog_bind_agent'
 export const DOG_DELEGATE_AGENT_TOOL = 'dog_delegate_agent'
 export const DOG_STATUS_TOOL = 'dog_status'
+export const DOG_CANCEL_TOOL = 'dog_cancel'
 
 const JSON_OUTPUT = {
   schema: { type: 'json' as const },
@@ -32,9 +33,9 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
   return [
     defineTool({
       name: DOG_VALIDATE_TOOL,
-      description: 'Statically validate a DoG v0.1 graph. This does not write files, capture artifacts, or run goals.',
+      description: 'Statically validate a DoG v0.2 graph. This does not write files, capture artifacts, or run goals.',
       parameters: {
-        graph: { type: 'json', required: true, description: 'Complete JSON DoG graph using schemaVersion 0.1.' },
+        graph: { type: 'json', required: true, description: 'Complete JSON DoG graph using schemaVersion 0.2.' },
       },
       output: JSON_OUTPUT,
       isConcurrencySafe: () => true,
@@ -45,9 +46,9 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
     }),
     defineTool({
       name: DOG_CREATE_TOOL,
-      description: 'Compile and persist a valid DoG graph, resolving only host-configured artifact IDs and capturing immutable snapshots.',
+      description: 'Compile and persist a valid DoG v0.2 graph, resolving only host-configured artifact IDs and capturing immutable snapshots.',
       parameters: {
-        graph: { type: 'json', required: true, description: 'Complete JSON DoG graph using schemaVersion 0.1.' },
+        graph: { type: 'json', required: true, description: 'Complete JSON DoG graph using schemaVersion 0.2.' },
       },
       output: JSON_OUTPUT,
       async execute(args, exec) {
@@ -130,6 +131,24 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
         const run = await engine.status(args.runId)
         exec.signal.throwIfAborted()
         return jsonResult(runSummary(run))
+      },
+    }),
+    defineTool({
+      name: DOG_CANCEL_TOOL,
+      description: 'Cancel one running DoG run and its verifier workers; partial records remain inspectable.',
+      parameters: {
+        runId: { type: 'string', required: true, description: 'Run ID returned by dog_run.' },
+        reason: { type: 'string', description: 'Bounded human-readable cancellation reason.' },
+      },
+      output: JSON_OUTPUT,
+      isConcurrencySafe: () => true,
+      async execute(args, exec) {
+        exec.signal.throwIfAborted()
+        const runId = args.runId
+        const reason = typeof args.reason === 'string' && args.reason.length > 0 ? args.reason : 'cancelled by operator'
+        const cancelled = await engine.cancelRun(runId, reason)
+        exec.signal.throwIfAborted()
+        return jsonResult(runSummary(cancelled))
       },
     }),
   ]

@@ -11,7 +11,8 @@ import { injectAgenticAudit } from './helpers.ts'
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  await new Promise(resolve => setTimeout(resolve, 150))
+  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true }).catch(() => undefined)))
 })
 
 async function fixture(): Promise<{ root: string; dog: DogEngine }> {
@@ -160,5 +161,44 @@ describe('agentic Verifier Agent execution', () => {
     }
     expect(settled.state).toBe('completed')
     expect(settled.goals.audit?.state).toBe('needs_human')
+  })
+
+  it('annotateRun persists a bounded warning and recordVerifierLifecycle appends events', async () => {
+    const { dog } = await fixture()
+    const repository = (dog as unknown as { repository: DogRepository }).repository
+    const compiled = await dog.create(agenticGraph())
+    const run = await dog.run(compiled.input.id)
+    await dog.annotateRun(run.runId, 'verifier binding failed: no trusted invocation agent session')
+    await dog.recordVerifierLifecycle(run.runId, 'audit', 'verifier_released', 'session-worker-1')
+    const reread = await repository.loadRun(run.runId)
+    expect(reread.runtimeWarning).toContain('verifier binding failed')
+    const events = await repository.loadGoalRuntimeEvents(run.runId, 'audit')
+    expect(events.some(event => event.phase === 'verifier_released')).toBe(true)
+  })
+
+  it('reapOrphanRuns cancels runs whose heartbeat expired', async () => {
+    const { dog } = await fixture()
+    const repository = (dog as unknown as { repository: DogRepository }).repository
+    const compiled = await dog.create(agenticGraph())
+    const run = await dog.run(compiled.input.id)
+    // backdate the run to simulate a host restart after long silence
+    const staleAt = '2026-08-22T00:00:00.000Z'
+    await repository.saveRun({ ...run, state: 'running', updatedAt: staleAt })
+    const reaped = await dog.reapOrphanRuns(600_000)
+    expect(reaped).toBe(1)
+    const reread = await repository.loadRun(run.runId)
+    expect(reread.state).toBe('cancelled')
+    expect(reread.rootState).toBe('cancelled')
+    expect(reread.runtimeWarning).toContain('orphaned')
+  })
+
+  it('cancelRun stops the run heartbeat and marks it cancelled', async () => {
+    const { dog } = await fixture()
+    const compiled = await dog.create(agenticGraph())
+    const started = await dog.startRun(compiled.input.id, { invocation: { callId: 'call-cancel' } })
+    const cancelled = await dog.cancelRun(started.runId, 'operator request')
+    expect(cancelled.state).toBe('cancelled')
+    expect(cancelled.rootState).toBe('cancelled')
+    expect(cancelled.runtimeWarning).toContain('operator request')
   })
 })
