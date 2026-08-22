@@ -16,6 +16,7 @@ import { WorkspaceManager } from './workspace.ts'
 import { createBuiltinVerifierRegistry, type AgenticVerifierRunner, type VerifierContract } from './verifiers.ts'
 import type { AcceptancePlan } from './model.ts'
 import { waitForSettlement } from './verifier-file.ts'
+import { renderDeckPages } from './render.ts'
 
 export { DogEngine } from './core.ts'
 export {
@@ -106,12 +107,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         const inputPath = join(workspace.path, `${plan.artifactId}.bin`)
         await writeFile(inputPath, bytes)
         const resultPath = join(workspace.path, 'settlement.json')
+        const rendered = await renderDeckPages(inputPath, workspace.path)
+        if (!rendered.ok && runId !== undefined) {
+          await engine.annotateRun(runId, `page renderer unavailable for ${plan.goalId}: ${rendered.detail}`)
+        }
         const parentSessionId = readSessionId(parent)
         const started = await subagents.startContinuable({
           provider: config.subagentProvider,
           label: `verifier ${contract.id}@${contract.version}`,
           request: {
-            prompt: [{ type: 'text', text: buildVerifierPrompt(contract, plan, inputPath, resultPath) }],
+            prompt: [{ type: 'text', text: buildVerifierPrompt(contract, plan, inputPath, resultPath, rendered.pages) }],
             parent,
             maxDepth: config.subagentMaxDepth,
             toolFilter: { deny: ['bash'] },
@@ -191,7 +196,13 @@ interface HostContinuableSubagents {
   interrupt(sessionId: string, authority: { readonly kind: 'ancestor'; readonly agent: unknown }): void
 }
 
-function buildVerifierPrompt(contract: VerifierContract, plan: AcceptancePlan, inputPath: string, resultPath: string): string {
+function buildVerifierPrompt(
+  contract: VerifierContract,
+  plan: AcceptancePlan,
+  inputPath: string,
+  resultPath: string,
+  renderedPages: readonly string[],
+): string {
   const requirement = typeof plan.params.requirement === 'string'
     ? plan.params.requirement
     : contract.requirement
@@ -203,6 +214,12 @@ function buildVerifierPrompt(contract: VerifierContract, plan: AcceptancePlan, i
     `Target region: ${target}`,
     `Artifact file (read-only content): ${inputPath}`,
     `Allowed tools: ${contract.allowedTools.join(', ') || 'none'} (shell execution is disabled)`,
+    ...(renderedPages.length === 0
+      ? ['WARNING: no page renders are available; inspect the OOXML structure instead.']
+      : [
+        'Page renders (you have vision): use your read tool on each of these PNG files BEFORE judging:',
+        ...renderedPages.map(page => `  - ${page}`),
+      ]),
     'Your ONLY writable location is the directory containing the artifact file; all other paths are forbidden.',
     'Do not inspect, list, or read anything outside that directory.',
     'Produce structured evidence: your observation must state what you actually measured or saw',
