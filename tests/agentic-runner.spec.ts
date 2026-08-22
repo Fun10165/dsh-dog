@@ -118,4 +118,27 @@ describe('agentic Verifier Agent execution', () => {
     expect(run.goals.audit?.state).toBe('needs_human')
     expect(run.rootState).toBe('needs_replan')
   })
+
+  it('marks prior running runs of the same graph as cancelled on a new run', async () => {
+    const { dog } = await fixture()
+    const repository = (dog as unknown as { repository: DogRepository }).repository
+    const zombieAt = '2026-08-23T01:00:00.000Z'
+    await repository.saveRun({
+      runId: 'run-zombie',
+      graphId: 'agentic-demo',
+      graphDigest: '0000000000000000000000000000000000000000000000000000000000000000',
+      state: 'running',
+      gmDigests: {},
+      goals: {},
+      createdAt: zombieAt,
+      updatedAt: zombieAt,
+    })
+    const compiled = await dog.create(agenticGraph())
+    // The zombie is superseded by the new run even though its runId differs.
+    const run = await dog.run(compiled.input.id)
+    expect(run.runId).not.toBe('run-zombie')
+    const zombie = await repository.loadRun('run-zombie')
+    expect(zombie.state).toBe('cancelled')
+    expect(zombie.rootState).toBe('cancelled')
+  })
 })

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="1919.95" height="1080"
+     viewBox="0 0 1919.95 1080">
+
+<rect width="1919.95" height="1080" fill="white"/>
+<g transform="translate(72,252)"><rect width="1296" height="712.75" fill="none"/><foreignObject x="14.4" y="7.2" width="1267.2" height="698.35"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start;line-height:1"><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:18pt;line-height:1.2"><span style="font-family:'Calibri','PingFang SC', 'Hiragino Sans', 'Yu Gothic', 'Apple SD Gothic Neo', 'Microsoft YaHei', 'Noto Sans CJK SC',sans-serif;font-size:18pt;color:#000000">Click to edit Master text styles</span></div><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:18pt;line-height:1.2"><span style="font-family:'Calibri','PingFang SC', 'Hiragino Sans', 'Yu Gothic', 'Apple SD Gothic Neo', 'Microsoft YaHei', 'Noto Sans CJK SC',sans-serif;font-size:18pt;color:#000000">Second level</span></div><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:18pt;line-height:1.2"><span style="font-family:'Calibri','PingFang SC', 'Hiragino Sans', 'Yu Gothic', 'Apple SD Gothic Neo', 'Microsoft YaHei', 'Noto Sans CJK SC',sans-serif;font-size:18pt;color:#000000">Third level</span></div><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:18pt;line-height:1.2"><span style="font-family:'Calibri','PingFang SC', 'Hiragino Sans', 'Yu Gothic', 'Apple SD Gothic Neo', 'Microsoft YaHei', 'Noto Sans CJK SC',sans-serif;font-size:18pt;color:#000000">Fourth level</span></div><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:18pt;line-height:1.2"><span style="font-family:'Calibri','PingFang SC', 'Hiragino Sans', 'Yu Gothic', 'Apple SD Gothic Neo', 'Microsoft YaHei', 'Noto Sans CJK SC',sans-serif;font-size:18pt;color:#000000">Fifth level</span></div></div></foreignObject></g>
+<g transform="translate(72,1001)"><rect width="336" height="57.5" fill="none"/><foreignObject x="14.4" y="7.2" width="307.2" height="43.1"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;justify-content:center;line-height:1"><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:12pt;line-height:1.2">&#160;</div></div></foreignObject></g>
+<g transform="translate(1032,1001)"><rect width="336" height="57.5" fill="none"/><foreignObject x="14.4" y="7.2" width="307.2" height="43.1"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;justify-content:center;line-height:1"><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:12pt;line-height:1.2">&#160;</div></div></foreignObject></g>
+<g transform="translate(72,43.25)"><rect width="1296" height="180" fill="none"/><foreignObject x="14.4" y="7.2" width="1267.2" height="165.6"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start;line-height:1"><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:44pt;line-height:1.2">&#160;</div></div></foreignObject></g>
+<g transform="translate(86.4,50.4)"><rect width="1742.4" height="129.6" fill="none"/><foreignObject x="14.4" y="7.2" width="1713.6" height="115.2"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start;line-height:1"><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:32pt;line-height:1.2"><span style="font-family:'Calibri','PingFang SC', 'Hiragino Sans', 'Yu Gothic', 'Apple SD Gothic Neo', 'Microsoft YaHei', 'Noto Sans CJK SC',sans-serif;font-size:32pt;font-weight:bold;color:#1F2A44">记忆层:数据安全与三层保底</span></div></div></foreignObject></g>
+<g transform="translate(100.8,216)"><rect width="806.4" height="777.6" fill="none"/><foreignObject x="14.4" y="7.2" width="777.6" height="763.2"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start;line-height:1"><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:18pt;line-height:1.2"><span style="font-family:'Calibri','PingFang SC', 'Hiragino Sans', 'Yu Gothic', 'Apple SD Gothic Neo', 'Microsoft YaHei', 'Noto Sans CJK SC',sans-serif;font-size:18pt;color:#333333">• WAL 先持久再可见,崩溃后 21/21 全部可查到</span></div><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:18pt;line-height:1.2"><span style="font-family:'Calibri','PingFang SC', 'Hiragino Sans', 'Yu Gothic', 'Apple SD Gothic Neo', 'Microsoft YaHei', 'Noto Sans CJK SC',sans-serif;font-size:18pt;color:#333333">• 快照原子回滚:O(1) 指针,毫秒级视图切换</span></div><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:18pt;line-height:1.2"><span style="font-family:'Calibri','PingFang SC', 'Hiragino Sans', 'Yu Gothic', 'Apple SD Gothic Neo', 'Microsoft YaHei', 'Noto Sans CJK SC',sans-serif;font-size:18pt;color:#333333">• 任务队列:SIGKILL 后意图与上下文完整找回</span></div><div style="white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:18pt;line-height:1.2"><span style="font-family:'Calibri','PingFang SC', 'Hiragino Sans', 'Yu Gothic', 'Apple SD Gothic Neo', 'Microsoft YaHei', 'Noto Sans CJK SC',sans-serif;font-size:18pt;color:#333333">• recall_floor:可配置召回下限 85-100%</span></div></div></foreignObject></g>
+<g transform="translate(950.4,216)"><rect width="878.4" height="763.2" fill="white" fill-opacity="0"/><text x="439.2" y="12" text-anchor="middle" font-size="13" font-weight="bold" fill="#000000">recall_floor 三层保底</text><svg x="0" y="16" width="878.4" height="747.2" viewBox="0 0 557 464" preserveAspectRatio="xMidYMid meet">
+        <line x1="40" y1="439" x2="542" y2="439" stroke="#ccc" stroke-width="0.5"/>
+        <line x1="40" y1="367.5" x2="542" y2="367.5" stroke="#ccc" stroke-width="0.5"/>
+        <line x1="40" y1="296" x2="542" y2="296" stroke="#ccc" stroke-width="0.5"/>
+        <line x1="40" y1="224.5" x2="542" y2="224.5" stroke="#ccc" stroke-width="0.5"/>
+        <line x1="40" y1="153" x2="542" y2="153" stroke="#ccc" stroke-width="0.5"/>
+        <line x1="40" y1="81.5" x2="542" y2="81.5" stroke="#ccc" stroke-width="0.5"/>
+        <line x1="40" y1="10" x2="542" y2="10" stroke="#ccc" stroke-width="0.5"/>
+        <line x1="40" y1="10" x2="40" y2="439" stroke="#aaa" stroke-width="1"/>
+        <line x1="40" y1="439" x2="542" y2="439" stroke="#aaa" stroke-width="1"/>
+        <rect x="90.2" y="135.1" width="66.9" height="303.9" fill="#4472C4" opacity="1"/>
+        <text class="chart-data-label" x="123.7" y="132.1" fill="#000000" font-size="8" text-anchor="middle">85</text>
+        <rect x="257.5" y="96.3" width="66.9" height="342.7" fill="#4472C4" opacity="1"/>
+        <text class="chart-data-label" x="291" y="93.3" fill="#000000" font-size="8" text-anchor="middle">95.9</text>
+        <rect x="424.9" y="81.5" width="66.9" height="357.5" fill="#4472C4" opacity="1"/>
+        <text class="chart-data-label" x="458.3" y="78.5" fill="#000000" font-size="8" text-anchor="middle">100</text>
+        <line x1="123.7" y1="439" x2="123.7" y2="443" stroke="#aaa" stroke-width="1"/>
+        <text x="123.7" y="455" fill="#000000" font-size="9" text-anchor="middle">常规图搜索</text>
+        <line x1="291" y1="439" x2="291" y2="443" stroke="#aaa" stroke-width="1"/>
+        <text x="291" y="455" fill="#000000" font-size="9" text-anchor="middle">放宽深度</text>
+        <line x1="458.3" y1="439" x2="458.3" y2="443" stroke="#aaa" stroke-width="1"/>
+        <text x="458.3" y="455" fill="#000000" font-size="9" text-anchor="middle">压缩码全量重排</text>
+        <line x1="36" y1="439" x2="40" y2="439" stroke="#aaa" stroke-width="1"/>
+        <text x="36" y="439" fill="#000000" font-size="9" text-anchor="end" dominant-baseline="middle">0</text>
+        <line x1="36" y1="367.5" x2="40" y2="367.5" stroke="#aaa" stroke-width="1"/>
+        <text x="36" y="367.5" fill="#000000" font-size="9" text-anchor="end" dominant-baseline="middle">20</text>
+        <line x1="36" y1="296" x2="40" y2="296" stroke="#aaa" stroke-width="1"/>
+        <text x="36" y="296" fill="#000000" font-size="9" text-anchor="end" dominant-baseline="middle">40</text>
+        <line x1="36" y1="224.5" x2="40" y2="224.5" stroke="#aaa" stroke-width="1"/>
+        <text x="36" y="224.5" fill="#000000" font-size="9" text-anchor="end" dominant-baseline="middle">60</text>
+        <line x1="36" y1="153" x2="40" y2="153" stroke="#aaa" stroke-width="1"/>
+        <text x="36" y="153" fill="#000000" font-size="9" text-anchor="end" dominant-baseline="middle">80</text>
+        <line x1="36" y1="81.5" x2="40" y2="81.5" stroke="#aaa" stroke-width="1"/>
+        <text x="36" y="81.5" fill="#000000" font-size="9" text-anchor="end" dominant-baseline="middle">100</text>
+        <line x1="36" y1="10" x2="40" y2="10" stroke="#aaa" stroke-width="1"/>
+        <text x="36" y="10" fill="#000000" font-size="9" text-anchor="end" dominant-baseline="middle">120</text>
+      </svg></g>
+</svg>

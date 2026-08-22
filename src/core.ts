@@ -172,6 +172,7 @@ export class DogEngine {
     const signal = options.signal ?? new AbortController().signal
     const compiled = await this.repository.loadGraph(graphId)
     const runId = this.nextRunId()
+    await this.supersedePriorRunningRuns(compiled.input.id, runId)
     const createdAt = this.now().toISOString()
     const invocation = options.invocation === undefined
       ? undefined
@@ -469,6 +470,21 @@ export class DogEngine {
     }
     await this.repository.saveRun(run)
     return deepFreeze(run)
+  }
+
+  /** Mark any prior run of the same graph that never reached a terminal state, so a host restart cannot leave zombies. */
+  private async supersedePriorRunningRuns(graphId: string, nextRunId: string): Promise<void> {
+    const runs = await this.repository.listRuns()
+    for (const prior of runs) {
+      if (prior.graphId !== graphId || prior.state !== 'running' || prior.runId === nextRunId) continue
+      await this.repository.updateRun(prior.runId, current => ({
+        ...current,
+        state: 'cancelled',
+        rootState: 'cancelled',
+        runtimeWarning: `superseded by run ${nextRunId} (host restart or previous run was interrupted)`,
+        updatedAt: this.now().toISOString(),
+      }))
+    }
   }
 
   async status(runId: string): Promise<DogRun> {
