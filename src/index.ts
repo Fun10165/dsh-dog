@@ -226,7 +226,8 @@ function buildVerifierPrompt(
     'Produce structured evidence: your observation must state what you actually measured or saw',
     '(boxes, areas, OCR text, measurements). You cannot claim a pass or fail without evidence.',
     `Write your settlement to this exact absolute path with your write tool: ${resultPath}`,
-    'It must be a JSON object: {"settlement": "pass"|"fail"|"inconclusive", "observation": {...}}.',
+    'It MUST be exactly this top-level shape (nothing else, no evidence dump, no markdown):',
+    '{"settlement": "pass" | "fail" | "inconclusive", "observation": { <your measured evidence here> }}',
     'After writing the file, stop immediately: no further tool calls, no further inspection. Reply only "verification done".',
     'If the material cannot be inspected or you cannot decide, report settlement "inconclusive".',
   ].join('\n')

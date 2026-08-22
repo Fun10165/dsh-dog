@@ -37,7 +37,7 @@ export async function waitForSettlement(
 }
 
 export function parseSettlementFile(source: string): { readonly state: 'pass' | 'fail' | 'inconclusive'; readonly observation: Record<string, JsonValue> } {
- const value = JSON.parse(source) as unknown
+ const value = parseLooseJson(source)
  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
   return { state: 'inconclusive', observation: { outcome: 'settlement file is not a JSON object' } }
  }
@@ -63,6 +63,33 @@ export function parseSettlementFile(source: string): { readonly state: 'pass' | 
  }
  if (Object.keys(record).length === 0) record.settled = state
  return { state, observation: record }
+}
+
+/** Parse a settlement payload leniently: strip markdown fences, then try to extract the outermost JSON object. */
+function parseLooseJson(source: string): unknown {
+ let text = source.trim()
+ if (text.startsWith('```')) {
+  text = text.replace(/^```[A-Za-z]*\s*/u, '').replace(/\s*```\s*$/u, '')
+  text = text.trim()
+ }
+ try {
+  return JSON.parse(text) as unknown
+ } catch {
+  const start = text.indexOf('{')
+  if (start < 0) throw new Error('no JSON object found')
+  let depth = 0
+  for (let index = start; index < text.length; index++) {
+   const ch = text[index]
+   if (ch === '{') depth++
+   else if (ch === '}') {
+    depth--
+    if (depth === 0) {
+     return JSON.parse(text.slice(start, index + 1)) as unknown
+    }
+   }
+  }
+ }
+ throw new Error('no complete JSON object found')
 }
 
 function isJsonValueLike(value: unknown): boolean {
