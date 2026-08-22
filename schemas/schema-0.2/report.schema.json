@@ -49,7 +49,7 @@
     },
     "sha256": {
       "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
+      "pattern": "^([0-9a-f]{64}|sha256:[0-9a-f]{64})$"
     },
     "goalReport": {
       "type": "object",

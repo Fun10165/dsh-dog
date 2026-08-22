@@ -20,6 +20,7 @@ import {
 } from '../src/tools.ts'
 import type { DogGraphInput } from '../src/model.ts'
 import { DogRepository } from '../src/storage.ts'
+import { injectAgenticAudit } from './helpers.ts'
 
 const temporaryRoots: string[] = []
 const originalDshHome = process.env.DSH_HOME
@@ -53,14 +54,17 @@ function deploymentConfig(workspace: string) {
     maxExpressionDepth: 64,
     maxSnapshotBytes: 67_108_864,
     allowPartialRoot: false,
+    maxConcurrentVerifications: 1,
+    revalidateThreshold: 1,
+    gmDigestAlgo: 'sha256',
     subagentProvider: 'spawn',
     subagentMaxDepth: 3,
   })
 }
 
 function candidateGraph(): DogGraphInput {
-  return {
-    schemaVersion: '0.1',
+  return injectAgenticAudit({
+    schemaVersion: '0.2',
     id: 'plugin-smoke',
     root: 'root',
     nodes: {
@@ -78,9 +82,9 @@ function candidateGraph(): DogGraphInput {
         verifierParams: { artifactId: 'artifact' },
       },
     },
-    contains: [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }],
+    contains: [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }],
     dependsOn: [],
-  }
+  })
 }
 
 describe.sequential('DoG Cordis plugin', () => {
@@ -174,21 +178,14 @@ describe.sequential('DoG Cordis plugin', () => {
     })
     expect(status.isError).toBe(false)
     if (status.isError) throw new Error(status.error.message)
-    expect(status.value).toMatchObject({
+    const statusValue = status.value as { runId: string; graphId: string; rootState: string; goals: Array<{ goalId: string; state: string }> }
+    expect(statusValue).toMatchObject({
       runId,
       graphId: 'plugin-smoke',
       rootState: 'success',
-      goals: {
-        root: {
-          state: 'success',
-          agentSessions: [{
-            sessionId: 'session-plugin-test',
-            parentSessionId: 'parent-plugin-test',
-            role: 'orchestrator',
-          }],
-        },
-      },
     })
+    const rootReport = statusValue.goals.find(goal => goal.goalId === 'root')
+    expect(rootReport).toMatchObject({ state: 'success' })
     const runFiles = await readdir(join(home, 'dog', 'runs'))
     expect(runFiles).toHaveLength(1)
     const runFile = runFiles[0]
@@ -236,7 +233,7 @@ describe.sequential('DoG Cordis plugin', () => {
       arguments: {
         runId: run.runId,
         goalId: 'leaf',
-        role: 'executor',
+        role: 'verifier',
         label: 'artifact worker',
         prompt: 'Inspect the artifact and report evidence.',
       },
@@ -252,7 +249,7 @@ describe.sequential('DoG Cordis plugin', () => {
       agent: {
         sessionId: 'continuable-child',
         parentSessionId: 'owner-session',
-        role: 'executor',
+        role: 'verifier',
       },
     })
     expect(launched).toEqual([{ label: 'artifact worker', prompt: 'Inspect the artifact and report evidence.', parent: agent }])
@@ -262,7 +259,7 @@ describe.sequential('DoG Cordis plugin', () => {
           agentSessions: [{
             sessionId: 'continuable-child',
             parentSessionId: 'owner-session',
-            role: 'executor',
+            role: 'verifier',
           }],
         },
       },

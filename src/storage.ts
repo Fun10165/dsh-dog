@@ -15,6 +15,7 @@ import type {
   VerificationRecord,
 } from './model.ts'
 import { canonicalJson, sha256Json } from './json.ts'
+import { schemaErrorText, type SchemaSet } from './schema.ts'
 import type { SnapshotReader } from './verifiers.ts'
 
 export interface HostArtifactConfig {
@@ -34,14 +35,14 @@ export interface CapturedArtifact {
   readonly relativePath: string
 }
 
-/** File-backed snapshot and graph/run repository. */
 export class DogRepository implements SnapshotReader {
   readonly rootPath: string
   private readonly runMutationTails = new Map<string, Promise<void>>()
+  private readonly schema: SchemaSet | undefined
 
-
-  constructor(rootPath: string) {
+  constructor(rootPath: string, schema: SchemaSet | undefined = undefined) {
     this.rootPath = rootPath
+    this.schema = schema
   }
 
   /** Create the repository directory layout. */
@@ -60,7 +61,7 @@ export class DogRepository implements SnapshotReader {
   async saveGraph(compiled: CompiledGraph): Promise<void> {
     await this.initialize()
     const record = {
-      schemaVersion: '0.1',
+      schemaVersion: '0.2',
       graphDigest: compiled.graphDigest,
       input: compiled.input,
       acceptancePlans: compiled.acceptancePlans,
@@ -130,9 +131,20 @@ export class DogRepository implements SnapshotReader {
     }
   }
 
-  /** Load one run snapshot. */
+  /** Load one run snapshot, fail-closed against the run schema. */
   async loadRun(runId: string): Promise<DogRun> {
-    return readJson<DogRun>(join(this.rootPath, 'runs', `${safeKey(runId)}.json`))
+    const run = await readJson<DogRun>(join(this.rootPath, 'runs', `${safeKey(runId)}.json`))
+    if (this.schema !== undefined && !this.schema.validateRun(run)) {
+      throw new Error(`run record does not validate: ${schemaErrorText(this.schema.validateRun).join('; ')}`)
+    }
+    return run
+  }
+
+  /** Load the most recently updated completed run for a graph ID (revalidate_select input). */
+  async loadLatestCompletedRun(graphId: string): Promise<DogRun | undefined> {
+    const runs = await this.listRuns()
+    const matches = runs.filter(run => run.graphId === graphId && run.state === 'completed')
+    return matches[0]
   }
 
   /** Enumerate persisted run snapshots, newest update first. */
@@ -327,7 +339,7 @@ async function readCompiledGraph(rootPath: string, graphDigest: string): Promise
     acceptancePlans: Record<string, AcceptancePlan>
   }>(join(rootPath, 'graphs', `${graphDigest}.json`))
   const actualDigest = sha256Json({ input: record.input, acceptancePlans: record.acceptancePlans })
-  if (record.schemaVersion !== '0.1' || record.graphDigest !== graphDigest || actualDigest !== graphDigest) {
+  if (record.schemaVersion !== '0.2' || record.graphDigest !== graphDigest || actualDigest !== graphDigest) {
     throw new Error(`invalid persisted graph record ${graphDigest}`)
   }
   return {
@@ -341,37 +353,35 @@ function isDigest(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value)
 }
 
-const RUNTIME_EVENT_KINDS = new Set([
+const RUNTIME_PHASES = new Set([
   'goal_started',
   'dependency_blocked',
+  'grounding_extracted',
+  'workspace_allocated',
   'verifier_started',
   'verifier_passed',
   'verifier_failed',
+  'verifier_inconclusive',
   'composite_evaluated',
-  'goal_error',
+  'result_inherited',
+  'structured_error',
   'goal_settled',
+  'run_warning',
 ])
 const GOAL_STATES = new Set([
   'pending', 'running', 'success', 'failure', 'blocked', 'needs_human',
-  'cancelled', 'invalidated', 'partial',
+  'cancelled', 'invalidated', 'partial', 'inherited',
 ])
-const RUNTIME_STAGES = new Set(['scheduling', 'verification', 'composition'])
-const RUNTIME_ERROR_KINDS = new Set(['acceptance_plan_missing', 'completion_expression_missing', 'verification_error'])
 
 function parseRuntimeEvent(value: unknown, expectedRunId: string, expectedGoalId: string, index: number): GoalRuntimeEvent {
   const path = `runtime event ${index}`
   const record = requireRecord(value, path)
   const runId = requireString(record.runId, `${path}.runId`)
-  const graphDigest = requireString(record.graphDigest, `${path}.graphDigest`)
   const goalId = requireString(record.goalId, `${path}.goalId`)
-  const kind = requireString(record.kind, `${path}.kind`)
-  const sequence = requireNonNegativeInteger(record.sequence, `${path}.sequence`)
-  const attempt = requireNonNegativeInteger(record.attempt, `${path}.attempt`)
+  const phase = requireString(record.phase, `${path}.phase`)
   if (runId !== expectedRunId) throw new Error(`${path}.runId does not match its event log`)
   if (goalId !== expectedGoalId) throw new Error(`${path}.goalId does not match its event log`)
-  if (!isDigest(graphDigest)) throw new Error(`${path}.graphDigest is invalid`)
-  if (!RUNTIME_EVENT_KINDS.has(kind)) throw new Error(`${path}.kind is invalid`)
-  if (attempt < 1) throw new Error(`${path}.attempt must be positive`)
+  if (!RUNTIME_PHASES.has(phase)) throw new Error(`${path}.phase is invalid`)
 
   const state = record.state === undefined ? undefined : requireString(record.state, `${path}.state`)
   if (state !== undefined && !GOAL_STATES.has(state)) throw new Error(`${path}.state is invalid`)
@@ -379,34 +389,28 @@ function parseRuntimeEvent(value: unknown, expectedRunId: string, expectedGoalId
   const durationMs = record.durationMs === undefined
     ? undefined
     : requireNonNegativeInteger(record.durationMs, `${path}.durationMs`)
+  const attempt = record.attempt === undefined
+    ? undefined
+    : requireNonNegativeInteger(record.attempt, `${path}.attempt`)
+  if (attempt !== undefined && attempt < 1) throw new Error(`${path}.attempt must be positive`)
+  const gmDigest = record.gmDigest === undefined ? undefined : requireString(record.gmDigest, `${path}.gmDigest`)
   const verifierRecord = record.verifier === undefined ? undefined : requireRecord(record.verifier, `${path}.verifier`)
   const verifier = verifierRecord === undefined ? undefined : {
     id: requireString(verifierRecord.id, `${path}.verifier.id`),
     version: requireString(verifierRecord.version, `${path}.verifier.version`),
     artifactId: requireString(verifierRecord.artifactId, `${path}.verifier.artifactId`),
   }
-  const errorRecord = record.error === undefined ? undefined : requireRecord(record.error, `${path}.error`)
-  const error = errorRecord === undefined ? undefined : {
-    kind: requireString(errorRecord.kind, `${path}.error.kind`),
-    stage: requireString(errorRecord.stage, `${path}.error.stage`),
-    message: requireBoundedString(errorRecord.message, `${path}.error.message`),
-  }
-  if (error !== undefined && (!RUNTIME_ERROR_KINDS.has(error.kind) || !RUNTIME_STAGES.has(error.stage))) {
-    throw new Error(`${path}.error is invalid`)
-  }
   return {
     schemaVersion: record.schemaVersion === '0.1' ? '0.1' : fail(`${path}.schemaVersion must be 0.1`),
     runId,
-    graphDigest,
     goalId,
-    sequence,
-    attempt,
-    kind: kind as GoalRuntimeEvent['kind'],
+    phase: phase as GoalRuntimeEvent['phase'],
     at: requireString(record.at, `${path}.at`),
     ...(state === undefined ? {} : { state: state as NonNullable<GoalRuntimeEvent['state']> }),
     ...(reason === undefined ? {} : { reason }),
     ...(verifier === undefined ? {} : { verifier }),
-    ...(error === undefined ? {} : { error: error as NonNullable<GoalRuntimeEvent['error']> }),
+    ...(gmDigest === undefined ? {} : { gmDigest }),
+    ...(attempt === undefined ? {} : { attempt }),
     ...(durationMs === undefined ? {} : { durationMs }),
   }
 }

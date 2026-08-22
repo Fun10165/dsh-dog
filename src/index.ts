@@ -1,14 +1,16 @@
 /** DeepSeek Harness DoG plugin entry: configuration, lifecycle, and tools. */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-connection'
+import type { } from '@deepseek-ai/dsh-client-connection'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import z from '@deepseek-ai/schemastery'
 import { DogEngine } from './core.ts'
 import { DOG_DEBUG_RPC_CHANNEL, createDogDebugRpcHandler } from './debug.ts'
 import type { ArtifactBinding, ArtifactRootBinding } from './model.ts'
+import { loadSchemaSet } from './schema.ts'
 import { DogRepository } from './storage.ts'
 import { createDogDelegateAgentTool, createDogTools } from './tools.ts'
+import { WorkspaceManager } from './workspace.ts'
 
 export { DogEngine } from './core.ts'
 export {
@@ -22,7 +24,10 @@ export {
 export type { DogDebugGraphRevision, DogDebugSnapshot } from './debug.ts'
 export { DogValidationError, parseGraph } from './graph.ts'
 export { evaluateBoolExpr, parseBoolExpr } from './logic.ts'
-export { AtomicVerifierRegistry, createBuiltinVerifierRegistry } from './verifiers.ts'
+export { createBuiltinExtractorRegistry } from './extractors.ts'
+export { VerifierContractRegistry, createBuiltinVerifierRegistry } from './verifiers.ts'
+export { WorkspaceManager } from './workspace.ts'
+export { loadSchemaSet } from './schema.ts'
 export {
   DOG_BIND_AGENT_TOOL,
   DOG_CREATE_TOOL,
@@ -50,6 +55,9 @@ export interface Config {
   maxExpressionDepth: number
   maxSnapshotBytes: number
   allowPartialRoot: boolean
+  maxConcurrentVerifications: number
+  revalidateThreshold: number
+  gmDigestAlgo: string
   subagentProvider: string
   subagentMaxDepth: number
 }
@@ -71,14 +79,18 @@ export const Config: z<Config> = z.object({
   maxExpressionDepth: z.natural().min(1).default(64),
   maxSnapshotBytes: z.natural().min(1).default(67_108_864),
   allowPartialRoot: z.boolean().default(false),
+  maxConcurrentVerifications: z.natural().min(1).default(1),
+  revalidateThreshold: z.number().default(0.3),
+  gmDigestAlgo: z.string().default('sha256'),
   subagentProvider: z.string().default('spawn'),
   subagentMaxDepth: z.natural().default(3),
 })
 
 /** Register all DoG tools as Cordis-owned effects so fiber disposal removes them. */
-export function apply(ctx: Context, config: Config): void {
-  const repository = new DogRepository(dshHomePath(config.storageDirectory))
-  const engine = new DogEngine({ config, repository })
+export async function apply(ctx: Context, config: Config): Promise<void> {
+  const schema = await loadSchemaSet()
+  const repository = new DogRepository(dshHomePath(config.storageDirectory), schema)
+  const engine = new DogEngine({ config, repository, workspaces: new WorkspaceManager() })
   for (const tool of createDogTools(engine)) ctx.effect(() => ctx.tools.register(tool))
   ctx.inject(['subagents'], (subagentCtx) => {
     const subagents = (subagentCtx as unknown as { readonly subagents: HostContinuableSubagents }).subagents

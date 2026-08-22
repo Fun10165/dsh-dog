@@ -322,61 +322,61 @@ function DogDock({ snapshot, sessions, loading, error, onOpenRevision, onRefresh
       </div>
       <div className="dog-dock-content">
         <header className="dog-dock-header">
-        <span className="dog-dock-mark"><NetworkIcon size={16} /></span>
-        <div className="dog-dock-heading">
-          <h2>DoG</h2>
-          <span>{loading ? 'Syncing…' : error === undefined ? 'Live goals' : 'Refresh failed'}</span>
-        </div>
-        <IconButton label="Refresh recent DoGs" busy={loading} onClick={onRefresh}><RefreshIcon /></IconButton>
-      </header>
-      {error === undefined ? null : <div className="dog-dock-error" title={error}>Last sync failed</div>}
-      {revisions.length === 0 ? (
-        <div className="dog-dock-empty">
-          <span className="dog-dock-empty-icon"><NetworkIcon size={19} /></span>
-          <strong>{loading ? 'Loading DoGs' : 'No DoG yet'}</strong>
-          <span>dog_create adds the first graph.</span>
-        </div>
-      ) : (
-        <ul className="dog-dock-list">
-          {revisions.map(revision => {
-            const run = latestRun(revision)
-            const total = Object.keys(revision.graph.input.nodes).length
-            const settled = settledGoalCount(run)
-            const agents = summarizeRunAgents(run, sessions)
-            const state = run?.rootState ?? run?.state ?? 'pending'
-            const progress = total === 0 ? 0 : Math.round((settled / total) * 100)
-            const rootTitle = revision.graph.input.nodes[revision.graph.input.root]?.title ?? revision.graph.input.id
-            return (
-              <li key={revision.graph.graphDigest}>
-                <button
-                  className="dog-dock-card"
-                  type="button"
-                  onClick={() => onOpenRevision(revision)}
-                  aria-label={`Open ${rootTitle}: ${humanizeState(state)}, ${settled} of ${total} goals complete`}
-                >
-                  <span className="dog-dock-card-head">
-                    <span className="dog-dock-title-wrap">
-                      <span className="dog-dock-title">{rootTitle}</span>
-                      <span className="dog-dock-id">{revision.graph.input.id}</span>
+          <span className="dog-dock-mark"><NetworkIcon size={16} /></span>
+          <div className="dog-dock-heading">
+            <h2>DoG</h2>
+            <span>{loading ? 'Syncing…' : error === undefined ? 'Live goals' : 'Refresh failed'}</span>
+          </div>
+          <IconButton label="Refresh recent DoGs" busy={loading} onClick={onRefresh}><RefreshIcon /></IconButton>
+        </header>
+        {error === undefined ? null : <div className="dog-dock-error" title={error}>Last sync failed</div>}
+        {revisions.length === 0 ? (
+          <div className="dog-dock-empty">
+            <span className="dog-dock-empty-icon"><NetworkIcon size={19} /></span>
+            <strong>{loading ? 'Loading DoGs' : 'No DoG yet'}</strong>
+            <span>dog_create adds the first graph.</span>
+          </div>
+        ) : (
+          <ul className="dog-dock-list">
+            {revisions.map(revision => {
+              const run = latestRun(revision)
+              const total = Object.keys(revision.graph.input.nodes).length
+              const settled = settledGoalCount(run)
+              const agents = summarizeRunAgents(run, sessions)
+              const state = run?.rootState ?? run?.state ?? 'pending'
+              const progress = total === 0 ? 0 : Math.round((settled / total) * 100)
+              const rootTitle = revision.graph.input.nodes[revision.graph.input.root]?.title ?? revision.graph.input.id
+              return (
+                <li key={revision.graph.graphDigest}>
+                  <button
+                    className="dog-dock-card"
+                    type="button"
+                    onClick={() => onOpenRevision(revision)}
+                    aria-label={`Open ${rootTitle}: ${humanizeState(state)}, ${settled} of ${total} goals complete`}
+                  >
+                    <span className="dog-dock-card-head">
+                      <span className="dog-dock-title-wrap">
+                        <span className="dog-dock-title">{rootTitle}</span>
+                        <span className="dog-dock-id">{revision.graph.input.id}</span>
+                      </span>
+                      <StatusChip state={state} />
                     </span>
-                    <StatusChip state={state} />
-                  </span>
-                  <span className="dog-dock-progress" aria-hidden="true">
-                    <span style={{ width: `${progress}%` }} />
-                  </span>
-                  <span className="dog-dock-metrics">
-                    <span><strong>{settled}/{total}</strong> nodes</span>
-                    <span><strong>{agents.linked}</strong> agents</span>
-                    <span><strong>{agents.running}</strong> live</span>
-                    <span><strong>{formatTokenMetric(agents.tokens, agents.partialTokens)}</strong> tok</span>
-                  </span>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-      <div className="dog-dock-footer">Open a DoG to inspect its graph and Agents</div>
+                    <span className="dog-dock-progress" aria-hidden="true">
+                      <span style={{ width: `${progress}%` }} />
+                    </span>
+                    <span className="dog-dock-metrics">
+                      <span><strong>{settled}/{total}</strong> nodes</span>
+                      <span><strong>{agents.linked}</strong> agents</span>
+                      <span><strong>{agents.running}</strong> live</span>
+                      <span><strong>{formatTokenMetric(agents.tokens, agents.partialTokens)}</strong> tok</span>
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+        <div className="dog-dock-footer">Open a DoG to inspect its graph and Agents</div>
       </div>
     </aside>
   )
@@ -737,7 +737,7 @@ function Inspector({ graph, run, nodeId, readGoalRuntime, openSession }: {
         {parents.length + children.length + dependencies.length === 0 ? <p className="dog-empty-small">No graph relations.</p> : (
           <ul className="dog-relation-list">
             {parents.map((edge, index) => <li className="dog-relation" key={`parent:${index}`}><strong>{edge.parent}</strong> contains this goal · {edge.required ? 'required' : 'optional'} · {edge.failure}</li>)}
-            {children.map((edge, index) => <li className="dog-relation" key={`child:${index}`}>Contains <strong>{edge.child}</strong> · {edge.required ? 'required' : 'optional'} · {edge.failure}{edge.merge === undefined ? '' : ` · merge ${edge.merge}`}</li>)}
+            {children.map((edge, index) => <li className="dog-relation" key={`child:${index}`}>Contains <strong>{edge.child}</strong> · {edge.required ? 'required' : 'optional'} · {edge.failure}</li>)}
             {dependencies.map((edge, index) => <li className="dog-relation" data-kind="dependsOn" key={`dependency:${index}`}><strong>{edge.source}</strong> depends on <strong>{edge.target}</strong>{edge.data === undefined ? '' : ` · ${edge.data.join(', ')}`}</li>)}
           </ul>
         )}
@@ -820,8 +820,8 @@ function RuntimeContextPanel({ run, goalId, readGoalRuntime, openSession }: Runt
 
   const events = trace?.events ?? []
   const latestEvent = events[events.length - 1]
-  const errorEvent = [...events].reverse().find(event => event.error !== undefined)
-  const attempts = new Set(events.map(event => event.attempt)).size
+  const errorEvent = [...events].reverse().find(event => event.phase === 'structured_error')
+  const attempts = new Set(events.map(event => event.attempt ?? 1)).size
   const invocation = trace?.invocation
   const goalState = trace?.result.state ?? run.goals[goalId]?.state ?? 'pending'
   const activity = runtimeActivity(goalState, latestEvent, loading)
@@ -860,10 +860,10 @@ function RuntimeContextPanel({ run, goalId, readGoalRuntime, openSession }: Runt
           </div>
         </div>
       </div>
-      {errorEvent?.error === undefined ? null : (
+      {errorEvent === undefined || errorEvent.reason === undefined ? null : (
         <div className={`dog-runtime-error ${stateClass(errorEvent.state ?? 'needs_human')}`}>
-          <strong>{humanizeState(errorEvent.error.kind)} · {errorEvent.error.stage}</strong>
-          <span>{errorEvent.error.message}</span>
+          <strong>Verification error</strong>
+          <span>{errorEvent.reason}</span>
         </div>
       )}
       {invocation === undefined ? null : (
@@ -889,15 +889,15 @@ function RuntimeContextPanel({ run, goalId, readGoalRuntime, openSession }: Runt
         </p>
       ) : (
         <ol className="dog-runtime-timeline" aria-label="Runtime event timeline">
-          {events.map(event => (
-            <li className={`dog-runtime-event ${stateClass(event.state ?? 'running')}`} key={event.sequence}>
+          {events.map((event, index) => (
+            <li className={`dog-runtime-event ${stateClass(event.state ?? 'running')}`} key={index}>
               <span className="dog-runtime-marker" />
               <div className="dog-runtime-event-copy">
                 <div className="dog-runtime-event-head">
-                  <strong>{runtimeEventLabel(event.kind)}</strong>
+                  <strong>{runtimeEventLabel(event.phase)}</strong>
                   <time dateTime={event.at}>{formatTime(event.at)}</time>
                 </div>
-                <div className="dog-runtime-event-meta">Attempt {event.attempt} · seq {event.sequence}</div>
+                {event.attempt === undefined ? null : <div className="dog-runtime-event-meta">Attempt {event.attempt}</div>}
                 {runtimeEventDetail(event) === undefined ? null : <div className="dog-runtime-event-detail">{runtimeEventDetail(event)}</div>}
               </div>
             </li>
@@ -917,28 +917,32 @@ function RuntimeContextPanel({ run, goalId, readGoalRuntime, openSession }: Runt
 
 function runtimeActivity(state: GoalState, event: GoalRuntimeEvent | undefined, loading: boolean): string {
   if (event === undefined) return loading ? 'Loading runtime context' : state === 'pending' ? 'Waiting for scheduler' : humanizeState(state)
-  if (event.kind === 'verifier_started' && event.verifier !== undefined) return `Running ${event.verifier.id}@${event.verifier.version}`
-  if (event.kind === 'dependency_blocked') return 'Blocked by an upstream dependency'
-  if (event.kind === 'goal_error') return 'Execution needs human review'
-  if (event.kind === 'goal_settled') return `Settled as ${humanizeState(event.state ?? state)}`
-  return runtimeEventLabel(event.kind)
+  if (event.phase === 'verifier_started' && event.verifier !== undefined) return `Running ${event.verifier.id}@${event.verifier.version}`
+  if (event.phase === 'dependency_blocked') return 'Blocked by an upstream dependency'
+  if (event.phase === 'structured_error') return 'Execution needs human review'
+  if (event.phase === 'goal_settled') return `Settled as ${humanizeState(event.state ?? state)}`
+  return runtimeEventLabel(event.phase)
 }
 
-function runtimeEventLabel(kind: GoalRuntimeEvent['kind']): string {
-  switch (kind) {
+function runtimeEventLabel(phase: GoalRuntimeEvent['phase']): string {
+  switch (phase) {
     case 'goal_started': return 'Goal started'
     case 'dependency_blocked': return 'Dependency blocked'
+    case 'grounding_extracted': return 'Grounding material extracted'
+    case 'workspace_allocated': return 'Isolated workspace allocated'
     case 'verifier_started': return 'Verifier started'
     case 'verifier_passed': return 'Verifier passed'
     case 'verifier_failed': return 'Verifier failed'
+    case 'verifier_inconclusive': return 'Verifier inconclusive'
     case 'composite_evaluated': return 'Completion rule evaluated'
-    case 'goal_error': return 'Runtime error'
+    case 'result_inherited': return 'Result inherited from prior run'
+    case 'structured_error': return 'Runtime error'
     case 'goal_settled': return 'Goal settled'
+    case 'run_warning': return 'Run warning'
   }
 }
 
 function runtimeEventDetail(event: GoalRuntimeEvent): string | undefined {
-  if (event.error !== undefined) return event.error.message
   if (event.reason !== undefined) return event.reason
   if (event.verifier !== undefined) return `${event.verifier.id}@${event.verifier.version} · artifact ${event.verifier.artifactId}`
   return undefined
@@ -1109,23 +1113,23 @@ function clampZoom(value: number): number {
 
 
 function NetworkIcon({ size = 16 }: { readonly size?: number }): JSX.Element {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="5" r="2.5" fill="currentColor"/><circle cx="5" cy="18" r="2.5" fill="currentColor"/><circle cx="19" cy="18" r="2.5" fill="currentColor"/><path d="M10.6 7.1 6.4 15.6M13.4 7.1l4.2 8.5M7.5 18h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="5" r="2.5" fill="currentColor" /><circle cx="5" cy="18" r="2.5" fill="currentColor" /><circle cx="19" cy="18" r="2.5" fill="currentColor" /><path d="M10.6 7.1 6.4 15.6M13.4 7.1l4.2 8.5M7.5 18h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
 }
 function AgentIcon(): JSX.Element {
-  return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.7"/><path d="M5.5 19c.5-3.4 2.7-5.3 6.5-5.3s6 1.9 6.5 5.3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/><path d="M18.3 7.2h2.2M19.4 6.1v2.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+  return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.7" /><path d="M5.5 19c.5-3.4 2.7-5.3 6.5-5.3s6 1.9 6.5 5.3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /><path d="M18.3 7.2h2.2M19.4 6.1v2.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
 }
 function RefreshIcon(): JSX.Element {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v4h-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 4v4h-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
 function CloseIcon(): JSX.Element {
-  return <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+  return <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
 }
 function DockCollapseIcon(): JSX.Element {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m14.5 6-6 6 6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m14.5 6-6 6 6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
 function DockExpandIcon(): JSX.Element {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9.5 6 6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9.5 6 6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
 function RootIcon(): JSX.Element {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 4.5 7.2v9.6L12 21l7.5-4.2V7.2L12 3Z" stroke="currentColor" strokeWidth="1.7"/><circle cx="12" cy="12" r="2.3" fill="currentColor"/></svg>
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 4.5 7.2v9.6L12 21l7.5-4.2V7.2L12 3Z" stroke="currentColor" strokeWidth="1.7" /><circle cx="12" cy="12" r="2.3" fill="currentColor" /></svg>
 }

@@ -3,7 +3,7 @@
 import { defineTool, type JsonValue, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { DogEngine } from './core.ts'
 import { isJsonValue } from './model.ts'
-import type { CompiledGraph, DogRun } from './model.ts'
+import type { CiReport, CompiledGraph, DogRun, GoalResult } from './model.ts'
 
 export interface DogAgentLauncher {
   launch(input: {
@@ -88,7 +88,7 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
         role: {
           type: 'string',
           required: true,
-          enum: ['orchestrator', 'executor', 'verifier', 'reviewer'] as const,
+          enum: ['orchestrator', 'verifier', 'reviewer'] as const,
           description: 'The Agent role for this goal.',
         },
       },
@@ -143,7 +143,7 @@ export function createDogDelegateAgentTool(engine: DogEngine, launcher: DogAgent
       role: {
         type: 'string',
         required: true,
-        enum: ['orchestrator', 'executor', 'verifier', 'reviewer'] as const,
+        enum: ['orchestrator', 'verifier', 'reviewer'] as const,
         description: 'The Agent role for this goal.',
       },
       label: { type: 'string', required: true, description: 'Short human-readable Agent label shown in the session tree.' },
@@ -210,34 +210,57 @@ function compiledGraphSummary(compiled: CompiledGraph): JsonValue {
   }
 }
 
-function runSummary(run: DogRun): JsonValue {
+function ciReport(run: DogRun): CiReport {
+  const goals = Object.entries(run.goals).map(([goalId, result]) => goalReport(goalId, result))
+  const revalidated = Object.entries(run.gmDigests)
+    .filter(([goalId]) => run.goals[goalId]?.state !== 'inherited')
+    .map(([goalId]) => goalId)
+  const inherited = Object.entries(run.goals)
+    .filter(([, result]) => result.state === 'inherited')
+    .map(([goalId, result]) => ({
+      goalId,
+      fromRunId: result.inheritedFrom ?? run.runId,
+      state: 'inherited' as const,
+    }))
+  const warning = revalidateWarning(run, revalidated)
   return {
     runId: run.runId,
     graphId: run.graphId,
-    graphDigest: run.graphDigest,
-    state: run.state,
-    ...run.rootState === undefined ? {} : { rootState: run.rootState },
-    goals: Object.fromEntries(Object.entries(run.goals).map(([goalId, result]) => [goalId, {
-      state: result.state,
-      ...result.reason === undefined ? {} : { reason: result.reason },
-      ...result.agentSessions === undefined ? {} : {
-        agentSessions: result.agentSessions.map(agent => ({ ...agent })),
-      },
-      ...result.verification === undefined ? {} : {
-        verification: {
-          verifierId: result.verification.verifierId,
-          verifierVersion: result.verification.verifierVersion,
-          artifactId: result.verification.artifactId,
-          snapshotId: result.verification.snapshotId,
-          passed: result.verification.passed,
-          observation: result.verification.observation,
-          verifiedAt: result.verification.verifiedAt,
-        },
-      },
-    }])),
-    createdAt: run.createdAt,
-    updatedAt: run.updatedAt,
+    ...(run.graphDigest === undefined ? {} : { graphDigest: run.graphDigest }),
+    rootState: run.rootState ?? (run.state === 'running' ? 'running' : 'cancelled'),
+    goals: goals.sort((left, right) => left.goalId.localeCompare(right.goalId)),
+    revalidated,
+    inherited,
+    ...(warning === undefined ? {} : { warning }),
+    generatedAt: run.updatedAt,
   }
+}
+
+function goalReport(goalId: string, result: GoalResult): CiReport['goals'][number] {
+  const verification = result.verification
+  return {
+    goalId,
+    state: result.state,
+    ...(verification === undefined ? {} : {
+      verifier: {
+        id: verification.verifierId,
+        version: verification.verifierVersion,
+        artifactId: verification.artifactId,
+      },
+    }),
+    ...(verification === undefined ? {} : { evidence: [verification.observation] }),
+    ...(result.reason === undefined ? {} : { defect: result.reason }),
+  }
+}
+
+function revalidateWarning(run: DogRun, revalidated: readonly string[]): string | undefined {
+  void revalidated
+  const warning = run.runtimeWarning
+  return warning === undefined ? undefined : warning
+}
+
+function runSummary(run: DogRun): JsonValue {
+  return ciReport(run) as unknown as JsonValue
 }
 
 function jsonResult(value: unknown): JsonValue {

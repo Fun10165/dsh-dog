@@ -22,18 +22,17 @@ import type { DogDebugGraphRevision, DogDebugSnapshot } from '../debug.ts'
 const DIGEST = /^[a-f0-9]{64}$/u
 const GOAL_STATES = new Set<GoalState>([
   'pending', 'running', 'success', 'failure', 'blocked', 'needs_human',
-  'cancelled', 'invalidated', 'partial',
+  'cancelled', 'invalidated', 'partial', 'inherited',
 ])
 const ROOT_STATES = new Set<RootTerminalState>([
   'success', 'partial_success', 'failure', 'infeasible', 'needs_replan', 'cancelled',
 ])
-const GOAL_AGENT_ROLES = new Set<GoalAgentRole>(['orchestrator', 'executor', 'verifier', 'reviewer'])
-const RUNTIME_EVENT_KINDS = new Set<GoalRuntimeEvent['kind']>([
-  'goal_started', 'dependency_blocked', 'verifier_started', 'verifier_passed',
-  'verifier_failed', 'composite_evaluated', 'goal_error', 'goal_settled',
+const GOAL_AGENT_ROLES = new Set<GoalAgentRole>(['orchestrator', 'verifier', 'reviewer'])
+const RUNTIME_PHASES = new Set<GoalRuntimeEvent['phase']>([
+  'goal_started', 'dependency_blocked', 'grounding_extracted', 'workspace_allocated',
+  'verifier_started', 'verifier_passed', 'verifier_failed', 'verifier_inconclusive',
+  'composite_evaluated', 'result_inherited', 'structured_error', 'goal_settled', 'run_warning',
 ])
-const RUNTIME_ERROR_KINDS = new Set(['acceptance_plan_missing', 'completion_expression_missing', 'verification_error'])
-const RUNTIME_STAGES = new Set(['scheduling', 'verification', 'composition'])
 
 /** Parse JSON from the debugger endpoint before it reaches render code. */
 export function parseDogDebugSnapshot(value: unknown): DogDebugSnapshot {
@@ -59,13 +58,8 @@ export function parseGoalRuntimeTrace(value: unknown): GoalRuntimeTrace {
   const rootState = root.rootState === undefined ? undefined : parseRootState(root.rootState, '$.rootState')
   const invocation = root.invocation === undefined ? undefined : parseInvocation(root.invocation, '$.invocation')
   const events = requireArray(root.events, '$.events').map((item, index) => (
-    parseRuntimeEvent(item, `$.events[${index}]`, { runId, graphDigest, goalId })
+    parseRuntimeEvent(item, `$.events[${index}]`, { runId, goalId })
   ))
-  for (let index = 1; index < events.length; index++) {
-    if ((events[index - 1]?.sequence ?? -1) >= (events[index]?.sequence ?? -1)) {
-      throw new Error('$.events must be strictly ordered by sequence')
-    }
-  }
   if (typeof root.truncated !== 'boolean') throw new Error('$.truncated must be a boolean')
   const runtimeWarning = root.runtimeWarning === undefined
     ? undefined
@@ -89,54 +83,43 @@ export function parseGoalRuntimeTrace(value: unknown): GoalRuntimeTrace {
 function parseRuntimeEvent(
   value: unknown,
   path: string,
-  expected: { readonly runId: string; readonly graphDigest: string; readonly goalId: string },
+  expected: { readonly runId: string; readonly goalId: string },
 ): GoalRuntimeEvent {
   const root = requireRecord(value, path)
   if (root.schemaVersion !== '0.1') throw new Error(`${path}.schemaVersion must be 0.1`)
   const runId = requireBoundedString(root.runId, `${path}.runId`)
-  const graphDigest = requireDigest(root.graphDigest, `${path}.graphDigest`)
   const goalId = requireBoundedString(root.goalId, `${path}.goalId`)
-  if (runId !== expected.runId || graphDigest !== expected.graphDigest || goalId !== expected.goalId) {
+  if (runId !== expected.runId || goalId !== expected.goalId) {
     throw new Error(`${path} does not belong to the requested goal trace`)
   }
-  const sequence = requireNonNegativeInteger(root.sequence, `${path}.sequence`)
-  const attempt = requireNonNegativeInteger(root.attempt, `${path}.attempt`)
-  if (attempt < 1) throw new Error(`${path}.attempt must be positive`)
-  const kind = requireString(root.kind, `${path}.kind`)
-  if (!RUNTIME_EVENT_KINDS.has(kind as GoalRuntimeEvent['kind'])) throw new Error(`${path}.kind is invalid`)
+  const phase = requireString(root.phase, `${path}.phase`)
+  if (!RUNTIME_PHASES.has(phase as GoalRuntimeEvent['phase'])) throw new Error(`${path}.phase is invalid`)
   const state = root.state === undefined ? undefined : parseGoalState(root.state, `${path}.state`)
   const reason = root.reason === undefined ? undefined : requireBoundedString(root.reason, `${path}.reason`)
+  const durationMs = root.durationMs === undefined
+    ? undefined
+    : requireNonNegativeInteger(root.durationMs, `${path}.durationMs`)
+  const attempt = root.attempt === undefined
+    ? undefined
+    : requireNonNegativeInteger(root.attempt, `${path}.attempt`)
+  const gmDigest = root.gmDigest === undefined ? undefined : requireString(root.gmDigest, `${path}.gmDigest`)
   const verifierRecord = root.verifier === undefined ? undefined : requireRecord(root.verifier, `${path}.verifier`)
   const verifier = verifierRecord === undefined ? undefined : {
     id: requireBoundedString(verifierRecord.id, `${path}.verifier.id`),
     version: requireBoundedString(verifierRecord.version, `${path}.verifier.version`),
     artifactId: requireBoundedString(verifierRecord.artifactId, `${path}.verifier.artifactId`),
   }
-  const errorRecord = root.error === undefined ? undefined : requireRecord(root.error, `${path}.error`)
-  const error = errorRecord === undefined ? undefined : {
-    kind: requireString(errorRecord.kind, `${path}.error.kind`),
-    stage: requireString(errorRecord.stage, `${path}.error.stage`),
-    message: requireBoundedString(errorRecord.message, `${path}.error.message`),
-  }
-  if (error !== undefined && (!RUNTIME_ERROR_KINDS.has(error.kind) || !RUNTIME_STAGES.has(error.stage))) {
-    throw new Error(`${path}.error is invalid`)
-  }
-  const durationMs = root.durationMs === undefined
-    ? undefined
-    : requireNonNegativeInteger(root.durationMs, `${path}.durationMs`)
   return {
     schemaVersion: '0.1',
     runId,
-    graphDigest,
     goalId,
-    sequence,
-    attempt,
-    kind: kind as GoalRuntimeEvent['kind'],
+    phase: phase as GoalRuntimeEvent['phase'],
     at: requireString(root.at, `${path}.at`),
     ...(state === undefined ? {} : { state }),
     ...(reason === undefined ? {} : { reason }),
     ...(verifier === undefined ? {} : { verifier }),
-    ...(error === undefined ? {} : { error: error as NonNullable<GoalRuntimeEvent['error']> }),
+    ...(gmDigest === undefined ? {} : { gmDigest }),
+    ...(attempt === undefined ? {} : { attempt }),
     ...(durationMs === undefined ? {} : { durationMs }),
   }
 }
@@ -182,6 +165,14 @@ function parseAcceptancePlan(value: unknown, path: string): AcceptancePlan {
   if (scope.kind !== 'file' || scope.artifactId !== artifactId) throw new Error(`${path}.scope is invalid`)
   const snapshot = parseSnapshot(root.snapshot, `${path}.snapshot`)
   if (snapshot.artifactId !== artifactId) throw new Error(`${path}.snapshot artifact mismatch`)
+  const groundingRecord = requireRecord(root.grounding, `${path}.grounding`)
+  const grounding = groundingRecord.kind === 'programmatic'
+    ? {
+      kind: 'programmatic' as const,
+      extractorId: requireString(groundingRecord.extractorId, `${path}.grounding.extractorId`),
+      schema: requireString(groundingRecord.schema, `${path}.grounding.schema`),
+    }
+    : { kind: 'non_programmatic' as const }
   return {
     goalId: requireString(root.goalId, `${path}.goalId`),
     verifierId: requireString(root.verifierId, `${path}.verifierId`),
@@ -192,7 +183,9 @@ function parseAcceptancePlan(value: unknown, path: string): AcceptancePlan {
     snapshot,
     scope: { kind: 'file', artifactId },
     params: requireJsonRecord(root.params, `${path}.params`),
+    grounding,
     evidenceSchemaId: requireString(root.evidenceSchemaId, `${path}.evidenceSchemaId`),
+    ...(root.gmDigest === undefined ? {} : { gmDigest: requireString(root.gmDigest, `${path}.gmDigest`) }),
   }
 }
 
@@ -224,12 +217,16 @@ function parseRun(value: unknown, path: string): DogRun {
   const runtimeWarning = root.runtimeWarning === undefined
     ? undefined
     : requireBoundedString(root.runtimeWarning, `${path}.runtimeWarning`)
+  const gmDigestsRecord = root.gmDigests === undefined ? {} : requireRecord(root.gmDigests, `${path}.gmDigests`)
+  const gmDigests: Record<string, string> = {}
+  for (const [id, digest] of Object.entries(gmDigestsRecord)) gmDigests[id] = requireString(digest, `${path}.gmDigests.${id}`)
   return {
     runId: requireString(root.runId, `${path}.runId`),
     graphId: requireString(root.graphId, `${path}.graphId`),
     graphDigest: requireDigest(root.graphDigest, `${path}.graphDigest`),
     state,
     ...(rootState === undefined ? {} : { rootState }),
+    gmDigests,
     goals,
     ...(invocation === undefined ? {} : { invocation }),
     ...(runtimeWarning === undefined ? {} : { runtimeWarning }),
@@ -269,10 +266,14 @@ function parseGoalResult(value: unknown, path: string): GoalResult {
     : requireArray(root.agentSessions, `${path}.agentSessions`).map((agent, index) => (
       parseGoalAgentSession(agent, `${path}.agentSessions[${index}]`)
     ))
+  const inheritedFrom = root.inheritedFrom === undefined
+    ? undefined
+    : requireString(root.inheritedFrom, `${path}.inheritedFrom`)
   return {
     state,
     ...(reason === undefined ? {} : { reason }),
     ...(verification === undefined ? {} : { verification }),
+    ...(inheritedFrom === undefined ? {} : { inheritedFrom }),
     ...(agentSessions === undefined ? {} : { agentSessions }),
   }
 }
@@ -296,16 +297,19 @@ function parseVerification(value: unknown, path: string): VerificationRecord {
   const root = requireRecord(value, path)
   if (typeof root.passed !== 'boolean') throw new Error(`${path}.passed must be a boolean`)
   return {
+    schemaVersion: '0.1' as const,
     goalId: requireString(root.goalId, `${path}.goalId`),
     runId: requireString(root.runId, `${path}.runId`),
+    graphId: requireString(root.graphId, `${path}.graphId`),
     graphDigest: requireDigest(root.graphDigest, `${path}.graphDigest`),
     verifierId: requireString(root.verifierId, `${path}.verifierId`),
     verifierVersion: requireString(root.verifierVersion, `${path}.verifierVersion`),
     artifactId: requireString(root.artifactId, `${path}.artifactId`),
     snapshotId: requireString(root.snapshotId, `${path}.snapshotId`),
+    ...(root.gmDigest === undefined ? {} : { gmDigest: requireString(root.gmDigest, `${path}.gmDigest`) }),
     passed: root.passed,
     observation: requireJsonRecord(root.observation, `${path}.observation`),
-    verifiedAt: requireString(root.verifiedAt, `${path}.verifiedAt`),
+    at: requireString(root.at, `${path}.at`),
   }
 }
 
@@ -320,7 +324,9 @@ function parseRootState(value: unknown, path: string): RootTerminalState {
 }
 
 function parseRunState(value: unknown, path: string): DogRun['state'] {
-  if (value !== 'created' && value !== 'running' && value !== 'completed') throw new Error(`${path} is invalid`)
+  if (value !== 'running' && value !== 'completed' && value !== 'cancelled' && value !== 'failed') {
+    throw new Error(`${path} is invalid`)
+  }
   return value
 }
 

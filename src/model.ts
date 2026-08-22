@@ -1,6 +1,6 @@
-/** Core JSON-compatible types for the DoG v0.1 graph protocol. */
+/** Core JSON-compatible types for the DoG v0.2 Agentic CI protocol. */
 
-export const DOG_SCHEMA_VERSION = '0.1' as const
+export const DOG_SCHEMA_VERSION = '0.2' as const
 
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }
@@ -9,7 +9,6 @@ export type GoalId = string
 export type ConstraintKind = 'hard' | 'soft'
 export type GoalKind = 'leaf' | 'composite'
 export type FailurePolicy = 'fatal' | 'tolerable' | 'degrade'
-export type MergePolicy = 'none' | 'parent' | 'human'
 export type GoalState =
   | 'pending'
   | 'running'
@@ -20,6 +19,7 @@ export type GoalState =
   | 'cancelled'
   | 'invalidated'
   | 'partial'
+  | 'inherited'
 
 export interface RefExpr {
   readonly op: 'ref'
@@ -69,7 +69,6 @@ export interface ContainsEdge {
   readonly required: boolean
   readonly failure: FailurePolicy
   readonly degradeTo?: GoalId
-  readonly merge?: MergePolicy
 }
 
 export interface DependencyEdge {
@@ -107,6 +106,9 @@ export interface DogConfig {
   readonly maxExpressionDepth: number
   readonly maxSnapshotBytes: number
   readonly allowPartialRoot: boolean
+  readonly maxConcurrentVerifications: number
+  readonly revalidateThreshold: number
+  readonly gmDigestAlgo: string
 }
 
 export interface GraphLimits {
@@ -128,6 +130,10 @@ export interface ArtifactScope {
   readonly artifactId: string
 }
 
+export type GroundingDeclaration =
+  | { readonly kind: 'programmatic'; readonly extractorId: string; readonly schema: string }
+  | { readonly kind: 'non_programmatic' }
+
 export interface AcceptancePlan {
   readonly goalId: GoalId
   readonly verifierId: string
@@ -138,38 +144,25 @@ export interface AcceptancePlan {
   readonly snapshot: ArtifactSnapshot
   readonly scope: ArtifactScope
   readonly params: Record<string, JsonValue>
+  readonly grounding: GroundingDeclaration
   readonly evidenceSchemaId: string
+  readonly gmDigest?: string
 }
 
 export interface VerificationRecord {
-  readonly goalId: GoalId
+  readonly schemaVersion: '0.1'
   readonly runId: string
+  readonly graphId: string
   readonly graphDigest: string
+  readonly goalId: GoalId
   readonly verifierId: string
   readonly verifierVersion: string
   readonly artifactId: string
   readonly snapshotId: string
+  readonly gmDigest?: string
   readonly passed: boolean
   readonly observation: Record<string, JsonValue>
-  readonly verifiedAt: string
-}
-
-export type GoalRuntimeEventKind =
-  | 'goal_started'
-  | 'dependency_blocked'
-  | 'verifier_started'
-  | 'verifier_passed'
-  | 'verifier_failed'
-  | 'composite_evaluated'
-  | 'goal_error'
-  | 'goal_settled'
-
-export type GoalRuntimeStage = 'scheduling' | 'verification' | 'composition'
-
-export interface GoalRuntimeError {
-  readonly kind: 'acceptance_plan_missing' | 'completion_expression_missing' | 'verification_error'
-  readonly stage: GoalRuntimeStage
-  readonly message: string
+  readonly at: string
 }
 
 export interface GoalRuntimeVerifier {
@@ -178,24 +171,43 @@ export interface GoalRuntimeVerifier {
   readonly artifactId: string
 }
 
+export interface GoalRuntimeError {
+  readonly kind: 'acceptance_plan_missing' | 'completion_expression_missing' | 'verification_error' | 'agentic_unavailable'
+  readonly stage: 'scheduling' | 'verification' | 'composition'
+  readonly message: string
+}
+
+export type GoalRuntimePhase =
+  | 'goal_started'
+  | 'dependency_blocked'
+  | 'grounding_extracted'
+  | 'workspace_allocated'
+  | 'verifier_started'
+  | 'verifier_passed'
+  | 'verifier_failed'
+  | 'verifier_inconclusive'
+  | 'composite_evaluated'
+  | 'result_inherited'
+  | 'structured_error'
+  | 'goal_settled'
+  | 'run_warning'
+
 /** One append-only diagnostic event. It is operational context, never verifier evidence. */
 export interface GoalRuntimeEvent {
   readonly schemaVersion: '0.1'
   readonly runId: string
-  readonly graphDigest: string
   readonly goalId: GoalId
-  readonly sequence: number
-  readonly attempt: number
-  readonly kind: GoalRuntimeEventKind
-  readonly at: string
+  readonly phase: GoalRuntimePhase
   readonly state?: GoalState
+  readonly at: string
   readonly reason?: string
   readonly verifier?: GoalRuntimeVerifier
-  readonly error?: GoalRuntimeError
+  readonly gmDigest?: string
+  readonly attempt?: number
   readonly durationMs?: number
 }
 
-export type GoalAgentRole = 'orchestrator' | 'executor' | 'verifier' | 'reviewer'
+export type GoalAgentRole = 'orchestrator' | 'verifier' | 'reviewer'
 
 /** Trusted session identity captured when an Agent binds itself to one goal. */
 export interface GoalAgentSessionRef {
@@ -217,6 +229,7 @@ export interface GoalResult {
   readonly state: GoalState
   readonly reason?: string
   readonly verification?: VerificationRecord
+  readonly inheritedFrom?: string
   readonly agentSessions?: readonly GoalAgentSessionRef[]
 }
 
@@ -238,10 +251,11 @@ export interface DogRun {
   readonly runId: string
   readonly graphId: string
   readonly graphDigest: string
-  readonly state: 'created' | 'running' | 'completed'
+  readonly state: 'running' | 'completed' | 'cancelled' | 'failed'
   readonly rootState?: RootTerminalState
   readonly invocation?: RunInvocationContext
   readonly runtimeWarning?: string
+  readonly gmDigests: Readonly<Record<GoalId, string>>
   readonly goals: Readonly<Record<GoalId, GoalResult>>
   readonly createdAt: string
   readonly updatedAt: string
@@ -267,6 +281,27 @@ export interface GraphValidationReport {
   readonly valid: boolean
   readonly errors: readonly string[]
   readonly warnings: readonly string[]
+}
+
+export interface CiGoalReport {
+  readonly goalId: GoalId
+  readonly state: GoalState
+  readonly verifier?: GoalRuntimeVerifier
+  readonly evidence?: readonly Record<string, JsonValue>[]
+  readonly defect?: string
+  readonly settledAt?: string
+}
+
+export interface CiReport {
+  readonly runId: string
+  readonly graphId: string
+  readonly graphDigest?: string
+  readonly rootState: RootTerminalState | 'running' | 'cancelled'
+  readonly goals: readonly CiGoalReport[]
+  readonly revalidated?: readonly GoalId[]
+  readonly inherited?: readonly { goalId: GoalId; fromRunId: string; state: 'inherited' }[]
+  readonly warning?: string
+  readonly generatedAt: string
 }
 
 export function isJsonValue(value: unknown): value is JsonValue {

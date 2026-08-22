@@ -1,4 +1,4 @@
-/** Graph parser, structural validator, and cycle checker for DoG v0.1. */
+/** Graph parser, structural validator, and cycle checker for DoG v0.2. */
 
 import { parseBoolExpr } from './logic.ts'
 import type {
@@ -77,7 +77,7 @@ function parseNodes(
     const params = parseJsonObject(node.verifierParams, `$.nodes.${id}.verifierParams`, errors)
     if (kind === undefined || title === undefined || constraint === undefined) continue
     if (kind === 'leaf' && verifier === undefined) errors.push(`$.nodes.${id}: leaf requires verifier`)
-    if (kind === 'composite' && verifier !== undefined) errors.push(`$.nodes.${id}: composite verifier is not supported in v0.1`)
+    if (kind === 'composite' && verifier !== undefined) errors.push(`$.nodes.${id}: composite verifier is not supported in v0.2`)
     if (kind === 'composite' && node.completion === undefined) errors.push(`$.nodes.${id}: composite requires completion`)
     if (kind === 'leaf' && node.completion !== undefined) errors.push(`$.nodes.${id}: leaf cannot declare completion`)
     const nodeValue = {
@@ -103,18 +103,16 @@ function parseContains(value: unknown, errors: string[]): ContainsEdge[] | undef
     const path = `$.contains[${index}]`
     const record = asRecord(candidate, path, errors)
     if (record === undefined) continue
-    checkExactKeys(record, ['parent', 'child', 'required', 'failure', 'degradeTo', 'merge'], path, errors)
+    checkExactKeys(record, ['parent', 'child', 'required', 'failure', 'degradeTo'], path, errors)
     const parent = parseId(record.parent, `${path}.parent`, errors)
     const child = parseId(record.child, `${path}.child`, errors)
     const required = parseBoolean(record.required, `${path}.required`, errors)
     const failure = parseEnum(record.failure, ['fatal', 'tolerable', 'degrade'] as const, `${path}.failure`, errors)
-    const merge = record.merge === undefined ? 'none' : parseEnum(record.merge, ['none', 'parent', 'human'] as const, `${path}.merge`, errors)
     const degradeTo = record.degradeTo === undefined ? undefined : parseId(record.degradeTo, `${path}.degradeTo`, errors)
     if (failure !== 'degrade' && degradeTo !== undefined) errors.push(`${path}.degradeTo: only valid with failure=degrade`)
     if (failure === 'degrade' && degradeTo === undefined) errors.push(`${path}: failure=degrade requires degradeTo`)
-    if (merge !== undefined && merge !== 'none') errors.push(`${path}.merge: v0.1 only accepts none`)
-    if (parent !== undefined && child !== undefined && required !== undefined && failure !== undefined && merge !== undefined) {
-      edges.push({ parent, child, required, failure, ...(degradeTo === undefined ? {} : { degradeTo }), merge })
+    if (parent !== undefined && child !== undefined && required !== undefined && failure !== undefined) {
+      edges.push({ parent, child, required, failure, ...(degradeTo === undefined ? {} : { degradeTo }) })
     }
   }
   return edges

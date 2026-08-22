@@ -7,6 +7,7 @@ import { DogEngine } from '../src/core.ts'
 import { evaluateBoolExpr, parseBoolExpr } from '../src/logic.ts'
 import type { DogConfig, DogGraphInput } from '../src/model.ts'
 import { DogRepository } from '../src/storage.ts'
+import { injectAgenticAudit } from './helpers.ts'
 
 const temporaryRoots: string[] = []
 
@@ -21,14 +22,14 @@ afterEach(async () => {
 })
 
 function graph(nodes: DogGraphInput['nodes'], contains: DogGraphInput['contains']): DogGraphInput {
-  return {
-    schemaVersion: '0.1',
+  return injectAgenticAudit({
+    schemaVersion: '0.2',
     id: 'demo',
     root: 'root',
     nodes,
     contains,
     dependsOn: [],
-  }
+  })
 }
 
 function config(root: string, bindings: DogConfig['artifactBindings']): DogConfig {
@@ -41,6 +42,9 @@ function config(root: string, bindings: DogConfig['artifactBindings']): DogConfi
     maxExpressionDepth: 16,
     maxSnapshotBytes: 1024 * 1024,
     allowPartialRoot: false,
+    maxConcurrentVerifications: 1,
+    revalidateThreshold: 1,
+    gmDigestAlgo: 'sha256',
   }
 }
 
@@ -69,7 +73,7 @@ describe('graph validation', () => {
     const candidate = graph({
       root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
       leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
     const cyclic = { ...candidate, dependsOn: [{ source: 'leaf', target: 'root' }] }
     const report = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }]).validate(cyclic)
     expect(report.valid).toBe(false)
@@ -87,7 +91,7 @@ describe('graph validation', () => {
         verifier: { id: './evil.mjs', version: '1' },
         verifierParams: { artifactId: 'artifact', path: '/etc/passwd' },
       },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
     const report = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }]).validate(candidate)
     expect(report.valid).toBe(false)
     expect(report.errors[0]).toContain('unknown trusted verifier')
@@ -108,7 +112,7 @@ describe('graph validation', () => {
     const candidate = graph({
       root: { kind: 'composite', title: 'root', constraint: 'soft', completion: { op: 'ref', id: 'leaf' } },
       leaf: { kind: 'leaf', title: 'leaf', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-    }, [{ parent: 'root', child: 'leaf', required: false, failure: 'tolerable', merge: 'none' }])
+    }, [{ parent: 'root', child: 'leaf', required: false, failure: 'tolerable' }])
     const report = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }]).validate(candidate)
     expect(report.valid).toBe(false)
     expect(report.errors).toContain('$.root: root goal must be a hard constraint')
@@ -121,8 +125,8 @@ describe('graph validation', () => {
       primary: { kind: 'leaf', title: 'primary', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
       fallback: { kind: 'leaf', title: 'fallback', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
     }, [
-      { parent: 'root', child: 'primary', required: true, failure: 'degrade', degradeTo: 'primary', merge: 'none' },
-      { parent: 'root', child: 'fallback', required: false, failure: 'tolerable', merge: 'none' },
+      { parent: 'root', child: 'primary', required: true, failure: 'degrade', degradeTo: 'primary' },
+      { parent: 'root', child: 'fallback', required: false, failure: 'tolerable' },
     ])
     const report = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }]).validate({
       ...candidate,
@@ -146,7 +150,7 @@ describe('trusted snapshot execution', () => {
         verifier: { id: 'text.includes', version: '1' },
         verifierParams: { artifactId: 'artifact', expectedText: 'first' },
       },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
     const compiled = await dog.create(candidate)
     await writeFile(join(root, 'artifact.txt'), 'second version')
     const run = await dog.run(compiled.input.id)
@@ -166,7 +170,7 @@ describe('trusted snapshot execution', () => {
         kind: 'leaf', title: 'leaf', constraint: 'hard',
         verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' },
       },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
     const compiled = await dog.create(candidate)
     const graphFile = join(root, '.dog-store', 'graphs', `${compiled.graphDigest}.json`)
     const record = JSON.parse(await readFile(graphFile, 'utf8'))
@@ -182,7 +186,7 @@ describe('trusted snapshot execution', () => {
     const candidate = graph({
       root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
       leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
     await dog.create(candidate)
     const indexDirectory = join(root, '.dog-store', 'graph-index')
     const indexFile = (await readdir(indexDirectory))[0]
@@ -201,7 +205,7 @@ describe('trusted snapshot execution', () => {
         kind: 'leaf', title: 'leaf', constraint: 'hard',
         verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' },
       },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
     await dog.create(candidate)
     const run = await dog.run('demo')
     expect(run.rootState).toBe('failure')
@@ -219,7 +223,7 @@ describe('trusted snapshot execution', () => {
         kind: 'leaf', title: 'leaf', constraint: 'hard',
         verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' },
       },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
     await dog.create(candidate)
     const run = await dog.run('demo')
     expect(run.rootState).toBe('failure')
@@ -245,7 +249,7 @@ describe('trusted snapshot execution', () => {
           kind: 'leaf', title: 'leaf', constraint: 'hard',
           verifier: { id: verifier.id, version: '1' }, verifierParams: verifier.params,
         },
-      }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+      }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
       const compiled = await dog.create(candidate)
       const snapshotId = compiled.acceptancePlans.leaf?.snapshot.snapshotId
       if (snapshotId === undefined) throw new Error('compiled leaf snapshot is missing')
@@ -268,7 +272,7 @@ describe('trusted snapshot execution', () => {
         kind: 'leaf', title: 'leaf', constraint: 'hard',
         verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' },
       },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
     await expect(dog.create(candidate)).rejects.toThrow('escapes its configured root through a symbolic link')
   })
 })
@@ -278,7 +282,7 @@ describe('parent-relation semantics', () => {
     const root = await temporaryRoot()
     const dog = engine(root, [{ id: 'missing', rootId: 'workspace', relativePath: 'missing.txt' }])
     const candidate: DogGraphInput = {
-      schemaVersion: '0.1', id: 'shared', root: 'root',
+      schemaVersion: '0.2', id: 'shared', root: 'root',
       nodes: {
         root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'all', items: [{ op: 'ref', id: 'strict' }, { op: 'ref', id: 'lenient' }] } },
         strict: { kind: 'composite', title: 'strict', constraint: 'hard', completion: { op: 'ref', id: 'sharedLeaf' } },
@@ -286,14 +290,14 @@ describe('parent-relation semantics', () => {
         sharedLeaf: { kind: 'leaf', title: 'shared', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'missing' } },
       },
       contains: [
-        { parent: 'root', child: 'strict', required: true, failure: 'fatal', merge: 'none' },
-        { parent: 'root', child: 'lenient', required: false, failure: 'tolerable', merge: 'none' },
-        { parent: 'strict', child: 'sharedLeaf', required: true, failure: 'fatal', merge: 'none' },
-        { parent: 'lenient', child: 'sharedLeaf', required: true, failure: 'tolerable', merge: 'none' },
+        { parent: 'root', child: 'strict', required: true, failure: 'fatal' },
+        { parent: 'root', child: 'lenient', required: false, failure: 'tolerable' },
+        { parent: 'strict', child: 'sharedLeaf', required: true, failure: 'fatal' },
+        { parent: 'lenient', child: 'sharedLeaf', required: true, failure: 'tolerable' },
       ],
       dependsOn: [],
     }
-    await dog.create(candidate)
+    await dog.create(injectAgenticAudit(candidate))
     const run = await dog.run('shared')
     expect(run.goals.sharedLeaf?.state).toBe('failure')
     expect(run.goals.strict?.state).toBe('failure')
@@ -314,8 +318,8 @@ describe('parent-relation semantics', () => {
       primaryGoal: { kind: 'leaf', title: 'primary', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'primary' } },
       fallbackGoal: { kind: 'leaf', title: 'fallback', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'fallback' } },
     }, [
-      { parent: 'root', child: 'primaryGoal', required: true, failure: 'degrade', degradeTo: 'fallbackGoal', merge: 'none' },
-      { parent: 'root', child: 'fallbackGoal', required: false, failure: 'tolerable', merge: 'none' },
+      { parent: 'root', child: 'primaryGoal', required: true, failure: 'degrade', degradeTo: 'fallbackGoal' },
+      { parent: 'root', child: 'fallbackGoal', required: false, failure: 'tolerable' },
     ])
     await dog.create(candidate)
     const run = await dog.run('demo')
@@ -332,8 +336,8 @@ describe('parent-relation semantics', () => {
       lenient: { kind: 'leaf', title: 'lenient', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'missing' } },
       strict: { kind: 'leaf', title: 'strict', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'missing' } },
     }, [
-      { parent: 'root', child: 'lenient', required: true, failure: 'tolerable', merge: 'none' },
-      { parent: 'root', child: 'strict', required: true, failure: 'fatal', merge: 'none' },
+      { parent: 'root', child: 'lenient', required: true, failure: 'tolerable' },
+      { parent: 'root', child: 'strict', required: true, failure: 'fatal' },
     ])
     await dog.create(candidate)
     const run = await dog.run('demo')
@@ -354,8 +358,8 @@ describe('parent-relation semantics', () => {
       primaryGoal: { kind: 'leaf', title: 'primary', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'primary' } },
       fallbackGoal: { kind: 'leaf', title: 'fallback', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'fallback' } },
     }, [
-      { parent: 'root', child: 'primaryGoal', required: true, failure: 'degrade', degradeTo: 'fallbackGoal', merge: 'none' },
-      { parent: 'root', child: 'fallbackGoal', required: false, failure: 'tolerable', merge: 'none' },
+      { parent: 'root', child: 'primaryGoal', required: true, failure: 'degrade', degradeTo: 'fallbackGoal' },
+      { parent: 'root', child: 'fallbackGoal', required: false, failure: 'tolerable' },
     ])
     const compiled = await dog.create(candidate)
     const snapshotId = compiled.acceptancePlans.primaryGoal?.snapshot.snapshotId
@@ -379,8 +383,8 @@ describe('parent-relation semantics', () => {
       primaryGoal: { kind: 'leaf', title: 'primary', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'primary' } },
       fallbackGoal: { kind: 'leaf', title: 'fallback', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'fallback' } },
     }, [
-      { parent: 'root', child: 'primaryGoal', required: true, failure: 'degrade', degradeTo: 'fallbackGoal', merge: 'none' },
-      { parent: 'root', child: 'fallbackGoal', required: false, failure: 'tolerable', merge: 'none' },
+      { parent: 'root', child: 'primaryGoal', required: true, failure: 'degrade', degradeTo: 'fallbackGoal' },
+      { parent: 'root', child: 'fallbackGoal', required: false, failure: 'tolerable' },
     ])
     const compiled = await dog.create(candidate)
     const snapshotId = compiled.acceptancePlans.fallbackGoal?.snapshot.snapshotId
@@ -401,7 +405,7 @@ describe('trusted Agent bindings', () => {
     const candidate = graph({
       root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
       leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }])
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
     await dog.create(candidate)
     const run = await dog.run('demo', { invocation: { callId: 'run-call', agentSessionId: 'owner-session' } })
 
@@ -412,7 +416,7 @@ describe('trusted Agent bindings', () => {
       sessionId: 'owner-session',
     })
     await Promise.all([
-      dog.bindAgent({ runId: run.runId, goalId: 'leaf', role: 'executor', sessionId: 'child-a', parentSessionId: 'owner-session' }),
+      dog.bindAgent({ runId: run.runId, goalId: 'leaf', role: 'verifier', sessionId: 'child-a', parentSessionId: 'owner-session' }),
       dog.bindAgent({ runId: run.runId, goalId: 'leaf', role: 'verifier', sessionId: 'child-b', parentSessionId: 'owner-session' }),
     ])
     await dog.bindAgent({ runId: run.runId, goalId: 'leaf', role: 'reviewer', sessionId: 'child-a', parentSessionId: 'owner-session' })
@@ -432,14 +436,14 @@ describe('trusted Agent bindings', () => {
     await expect(dog.bindAgent({
       runId: run.runId,
       goalId: 'leaf',
-      role: 'executor',
+      role: 'verifier',
       sessionId: 'rogue-child',
       parentSessionId: 'unrelated-session',
     })).rejects.toThrow('is not rooted in run')
     await expect(dog.bindAgent({
       runId: run.runId,
       goalId: 'missing',
-      role: 'executor',
+      role: 'verifier',
       sessionId: 'owner-session',
     })).rejects.toThrow('has no goal missing')
   })
@@ -451,7 +455,7 @@ describe('trusted Agent bindings', () => {
     await dog.create(graph({
       root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
       leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal', merge: 'none' }]))
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
     const run = await dog.run('demo')
     await expect(dog.bindAgent({
       runId: run.runId,

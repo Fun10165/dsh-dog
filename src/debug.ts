@@ -55,10 +55,6 @@ export async function buildGoalRuntimeTrace(
   const result = run.goals[goalId]
   if (result === undefined) throw new Error(`run ${runId} has no goal ${goalId}`)
   const matching = [...await repository.loadGoalRuntimeEvents(runId, goalId)]
-    .sort((left, right) => left.sequence - right.sequence)
-  if (matching.some(event => event.graphDigest !== run.graphDigest)) {
-    throw new Error(`runtime event graph digest mismatch for run ${runId}`)
-  }
   const truncated = matching.length > MAX_RUNTIME_EVENTS_PER_GOAL
   return {
     schemaVersion: '0.1',

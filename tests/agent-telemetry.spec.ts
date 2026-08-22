@@ -23,12 +23,13 @@ function run(): DogRun {
     graphDigest: 'digest',
     state: 'running',
     invocation: { callId: 'call', agentSessionId: 'owner', invokedAt: BOUND_AT },
+    gmDigests: {},
     goals: {
       root: { state: 'success', agentSessions: [agent('owner', 'orchestrator')] },
       leaf: {
         state: 'running',
         agentSessions: [
-          agent('child-a', 'executor', 'owner'),
+          agent('child-a', 'verifier', 'owner'),
           agent('child-a', 'reviewer', 'owner'),
           agent('missing-child', 'verifier', 'owner'),
         ],
@@ -83,7 +84,7 @@ describe('Agent telemetry projection', () => {
     const current = run()
     const state = sessions()
     expect(goalAgentRefs(current, 'leaf').map(ref => [ref.sessionId, ref.role])).toEqual([
-      ['child-a', 'executor'],
+      ['child-a', 'verifier'],
       ['missing-child', 'verifier'],
     ])
 
