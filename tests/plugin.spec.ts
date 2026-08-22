@@ -146,7 +146,7 @@ describe.sequential('DoG Cordis plugin', () => {
     })
     expect(run.isError).toBe(false)
     if (run.isError) throw new Error(run.error.message)
-    expect(run.value).toMatchObject({ graphId: 'plugin-smoke', state: 'running' })
+    expect(run.value).toMatchObject({ graphId: 'plugin-smoke', rootState: 'running' })
     if (typeof run.value !== 'object' || run.value === null || Array.isArray(run.value)) throw new Error('run result is not an object')
     const runId = run.value.runId
     if (typeof runId !== 'string') throw new Error('run result has no runId')
