@@ -168,9 +168,36 @@ export class DogEngine {
     return compiled
   }
 
-  /** Run the Agentic CI cycle: revalidate-select, parallel verification, recompute. */
+  /** Synchronous run: prepare + execute to completion (tests, CLI). */
   async run(graphId: string, options: DogRunOptions = {}): Promise<DogRun> {
-    const signal = options.signal ?? new AbortController().signal
+    const prepared = await this.prepareRun(graphId, options)
+    return this.executeRun(prepared, options)
+  }
+
+  /** Asynchronous run: returns after the initial record is persisted; verification continues in background. */
+  async startRun(graphId: string, options: DogRunOptions = {}): Promise<DogRun> {
+    const prepared = await this.prepareRun(graphId, options)
+    const background = new AbortController().signal
+    void this.executeRun(prepared, { ...options, signal: background }).catch(async cause => {
+      try {
+        const live = await this.repository.loadRun(prepared.runId)
+        if (live.state === 'running') {
+          await this.repository.saveRun({
+            ...live,
+            state: 'failed',
+            rootState: 'failure',
+            runtimeWarning: `background execution failed: ${boundedMessage(messageOf(cause))}`,
+            updatedAt: this.now().toISOString(),
+          })
+        }
+      } catch {
+        // best-effort failure marking; the original error is the authoritative record
+      }
+    })
+    return prepared.initial
+  }
+
+  private async prepareRun(graphId: string, options: DogRunOptions): Promise<{ compiled: CompiledGraph; runId: string; initial: DogRun }> {
     const compiled = await this.repository.loadGraph(graphId)
     const runId = this.nextRunId()
     await this.supersedePriorRunningRuns(compiled.input.id, runId)
@@ -191,7 +218,7 @@ export class DogEngine {
       Object.keys(compiled.input.nodes).map(id => [id, { state: 'pending' as const }]),
     )
     const gmDigests: Record<string, string> = {}
-    let run: DogRun = {
+    const initial: DogRun = {
       runId,
       graphId: compiled.input.id,
       graphDigest: compiled.graphDigest,
@@ -202,7 +229,20 @@ export class DogEngine {
       createdAt,
       updatedAt: createdAt,
     }
-    await this.repository.saveRun(run)
+    await this.repository.saveRun(initial)
+    return { compiled, runId, initial }
+  }
+
+  /** The Agentic CI cycle: revalidate-select, parallel verification, recompute. */
+  private async executeRun(
+    prepared: { compiled: CompiledGraph; runId: string; initial: DogRun },
+    options: DogRunOptions,
+  ): Promise<DogRun> {
+    const { compiled, runId } = prepared
+    const signal = options.signal ?? new AbortController().signal
+    const goals: Record<string, GoalResult> = { ...prepared.initial.goals }
+    const gmDigests: Record<string, string> = { ...prepared.initial.gmDigests }
+    let run: DogRun = prepared.initial
 
     const appendRuntimeEvent = async (
       goalId: string,

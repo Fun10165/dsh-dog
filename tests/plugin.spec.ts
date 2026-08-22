@@ -34,7 +34,7 @@ async function temporaryRoot(): Promise<string> {
 afterEach(async () => {
   if (originalDshHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = originalDshHome
-  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true }).catch(() => undefined)))
 })
 
 async function setup() {
@@ -146,10 +146,30 @@ describe.sequential('DoG Cordis plugin', () => {
     })
     expect(run.isError).toBe(false)
     if (run.isError) throw new Error(run.error.message)
-    expect(run.value).toMatchObject({ graphId: 'plugin-smoke', rootState: 'success' })
+    expect(run.value).toMatchObject({ graphId: 'plugin-smoke', state: 'running' })
     if (typeof run.value !== 'object' || run.value === null || Array.isArray(run.value)) throw new Error('run result is not an object')
     const runId = run.value.runId
     if (typeof runId !== 'string') throw new Error('run result has no runId')
+
+    // dog_run is asynchronous: poll dog_status until the background run settles.
+    let statusValue: { runId: string; graphId: string; rootState: string; goals: Array<{ goalId: string; state: string }> } | undefined
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const poll = await ctx.tools.execute({
+        callId: CallId(`status-${attempt}`),
+        name: DOG_STATUS_TOOL,
+        arguments: { runId },
+        signal,
+      })
+      expect(poll.isError).toBe(false)
+      if (poll.isError) throw new Error(poll.error.message)
+      const value = poll.value as { runId: string; graphId: string; rootState: string; goals: Array<{ goalId: string; state: string }> }
+      if (value.rootState !== 'running' && value.rootState !== undefined) {
+        statusValue = value
+        break
+      }
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    expect(statusValue).toBeDefined()
 
     const bind = await ctx.tools.execute({
       callId: CallId('bind'),
@@ -170,15 +190,6 @@ describe.sequential('DoG Cordis plugin', () => {
       },
     })
 
-    const status = await ctx.tools.execute({
-      callId: CallId('status'),
-      name: DOG_STATUS_TOOL,
-      arguments: { runId },
-      signal,
-    })
-    expect(status.isError).toBe(false)
-    if (status.isError) throw new Error(status.error.message)
-    const statusValue = status.value as { runId: string; graphId: string; rootState: string; goals: Array<{ goalId: string; state: string }> }
     expect(statusValue).toMatchObject({
       runId,
       graphId: 'plugin-smoke',

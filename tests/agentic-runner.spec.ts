@@ -141,4 +141,24 @@ describe('agentic Verifier Agent execution', () => {
     expect(zombie.state).toBe('cancelled')
     expect(zombie.rootState).toBe('cancelled')
   })
+
+  it('startRun returns immediately and the run completes in the background', async () => {
+    const { dog } = await fixture()
+    const repository = (dog as unknown as { repository: DogRepository }).repository
+    const compiled = await dog.create(agenticGraph())
+    const started = await dog.startRun(compiled.input.id, { invocation: { callId: 'call-bg' } })
+    expect(started.state).toBe('running')
+    // poll until the background execution settles (default registry: inconclusive -> needs_replan)
+    const deadline = Date.now() + 5_000
+    let settled = started
+    while (Date.now() < deadline) {
+      const { promise, resolve } = Promise.withResolvers<void>()
+      setTimeout(resolve, 100)
+      await promise
+      settled = await repository.loadRun(started.runId)
+      if (settled.state !== 'running') break
+    }
+    expect(settled.state).toBe('completed')
+    expect(settled.goals.audit?.state).toBe('needs_human')
+  })
 })

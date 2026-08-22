@@ -66,7 +66,7 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
       output: JSON_OUTPUT,
       async execute(args, exec) {
         exec.signal.throwIfAborted()
-        const run = await engine.run(args.graphId, {
+        const run = await engine.startRun(args.graphId, {
           invocation: {
             callId: String(exec.callId),
             ...(exec.agent === undefined ? {} : { agentSessionId: String(exec.agent.id) }),
@@ -77,7 +77,9 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
           ...(exec.agent === undefined ? {} : { agent: exec.agent }),
         })
         exec.signal.throwIfAborted()
-        return jsonResult(runSummary(run))
+        return jsonResult(Object.assign({}, runSummary(run), {
+          note: 'verification is running in the background; poll with dog_status',
+        }))
       },
     }),
     defineTool({
