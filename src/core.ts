@@ -328,6 +328,8 @@ export class DogEngine {
         const settled = await verifyAcceptancePlan(plan, this.verifiers, this.repository, workspace, {
           parent: options.agent,
           signal,
+          runId,
+          goalId,
         })
         const verdict: GoalState = settled.state === 'pass' ? 'success' : settled.state === 'fail' ? 'failure' : 'needs_human'
         const record: VerificationRecord = {

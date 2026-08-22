@@ -74,6 +74,7 @@ describe('agentic Verifier Agent execution', () => {
           seen.set('artifactId', input.plan.artifactId)
           seen.set('parent', input.parent)
           seen.set('signalIsAbortSignal', input.signal instanceof AbortSignal)
+          seen.set('runIdIsString', typeof input.runId === 'string' && input.runId.length > 0)
           seen.set('workspaceCreated', await import('node:fs/promises').then(fs => fs.stat(input.workspace.path).then(() => true, () => false)))
           return { state: 'pass', observation: { checked: true, region: String((input.plan.params.target ?? '')) } }
         },
@@ -85,10 +86,11 @@ describe('agentic Verifier Agent execution', () => {
     expect(run.rootState).toBe('success')
     expect(run.goals.audit?.state).toBe('success')
     expect(seen.get('contractId')).toBe('vision.overlap')
-    expect(seen.get('goalId')).toBe('verification')
+    expect(seen.get('goalId')).toBe('audit')
     expect(seen.get('artifactId')).toBe('artifact')
     expect(seen.get('parent')).toBe(parent)
     expect(seen.get('signalIsAbortSignal')).toBe(true)
+    expect(seen.get('runIdIsString')).toBe(true)
     expect(seen.get('workspaceCreated')).toBe(true)
   })
 

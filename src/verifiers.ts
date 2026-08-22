@@ -26,6 +26,8 @@ export interface IsolatedWorkspace {
 export interface VerifierExecutionEnv {
   readonly parent?: unknown
   readonly signal?: AbortSignal
+  readonly runId?: string
+  readonly goalId?: string
 }
 
 /** Runner that executes one agentic Verifier Contract with an isolated worker session. */
@@ -36,6 +38,7 @@ export interface AgenticVerifierRunner {
     readonly workspace: IsolatedWorkspace
     readonly parent: unknown
     readonly signal: AbortSignal
+    readonly runId: string | undefined
   }): Promise<Settlement>
 }
 
@@ -193,7 +196,7 @@ export function createBuiltinVerifierRegistry(options: {
       if (options.agenticRunner === undefined) return { state: 'inconclusive', observation: {} }
       const contract = registry.get('vision.overlap', '1')
       const plan: AcceptancePlan = {
-        goalId: 'verification',
+        goalId: env?.goalId ?? 'verification',
         verifierId: contract.id,
         verifierVersion: contract.version,
         artifactId: params.artifactId as string,
@@ -211,6 +214,7 @@ export function createBuiltinVerifierRegistry(options: {
         workspace,
         parent: env?.parent,
         signal: env?.signal ?? new AbortController().signal,
+        runId: env?.runId,
       })
     },
   })

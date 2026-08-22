@@ -1,0 +1,14 @@
+实验结果:受限内存下的不输内存方案
+
+© SIFT1M 峰值 RSs 30.7 MB = 数据集的 8%(20% 硬                                      同机aps对比
+约束)                                                                   “
+
+© Recall@10 88.53%(赛题要求 >= 85%)
+
+。单线程 QPs 1600+,16 线程 5346(3.94x 扩展)                ol
+
+。写放大 115x -> 约 1x;SQLITE_BUSY 129 -> 0
+
+pipeANN                               hnswlb                              faiss HNSW                            falss NFPQ
+
+1/27/13                                                                                                                                                                    4

@@ -99,7 +99,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.inject(['subagents'], (subagentCtx) => {
     const subagents = (subagentCtx as unknown as { readonly subagents: HostContinuableSubagents }).subagents
     const agenticRunner: AgenticVerifierRunner = {
-      async run({ contract, plan, workspace, parent, signal }) {
+      async run({ contract, plan, workspace, parent, signal, runId }) {
         const bytes = await repository.read(plan.snapshot)
         const inputPath = join(workspace.path, `${plan.artifactId}.bin`)
         await writeFile(inputPath, bytes)
@@ -110,6 +110,27 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           signal,
           outputSchema: VERIFIER_OUTPUT_SCHEMA as never,
         } as never)
+        try {
+          const parentSessionId = readSessionId(parent)
+          if (runId !== undefined && parentSessionId.length > 0) {
+            await engine.bindAgent({
+              runId,
+              goalId: plan.goalId,
+              role: 'verifier',
+              sessionId: String(run.id),
+              parentSessionId,
+            })
+          }
+        } catch (bindingError) {
+          const warning = String(bindingError).slice(0, 512)
+          const result = await run.result
+          const structured = result.structured as unknown
+          const settlement = parseSettlement(structured)
+          if (settlement.state === 'inconclusive') {
+            return { state: 'inconclusive', observation: { bindingWarning: warning } }
+          }
+          return settlement
+        }
         const result = await run.result
         return parseSettlement(result.structured as unknown)
       },
@@ -153,6 +174,7 @@ interface HostContinuableSubagents {
     readonly signal: AbortSignal
     readonly outputSchema?: unknown
   }): Promise<{
+    readonly id: unknown
     readonly result: Promise<{
       readonly structured?: unknown
       readonly output: readonly unknown[]
@@ -203,14 +225,39 @@ function buildVerifierPrompt(contract: VerifierContract, plan: AcceptancePlan, i
 
 function parseSettlement(value: unknown): Settlement {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return { state: 'inconclusive', observation: {} }
-  const record = value as { readonly settlement?: unknown; readonly observation?: unknown }
-  const settlement = record.settlement
+  const raw = value as Record<string, unknown>
+  const settlement = raw.settlement
   if (settlement !== 'pass' && settlement !== 'fail' && settlement !== 'inconclusive') {
     return { state: 'inconclusive', observation: {} }
   }
-  const observation = record.observation
+  const observation = raw.observation
   if (observation === null || typeof observation !== 'object' || Array.isArray(observation)) {
     return { state: settlement, observation: { settled: settlement } }
   }
-  return { state: settlement, observation: observation as Record<string, JsonValue> }
+  const record: Record<string, JsonValue> = {}
+  for (const [key, item] of Object.entries(observation)) {
+    if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean' || item === null) {
+      record[key] = item as JsonValue
+    } else if (Array.isArray(item) || typeof item === 'object') {
+      if (isJsonValueLike(item)) record[key] = item as JsonValue
+    }
+  }
+  if (Object.keys(record).length === 0) record.settled = settlement
+  return { state: settlement, observation: record }
+}
+
+function isJsonValueLike(value: unknown): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (Array.isArray(value)) return value.every(isJsonValueLike)
+  if (typeof value !== 'object') return false
+  return Object.values(value).every(isJsonValueLike)
+}
+
+/** Read the durable session id from a host-provided agent object without trusting an unchecked shape. */
+function readSessionId(parent: unknown): string {
+  if (parent === null || typeof parent !== 'object') return ''
+  if (!('id' in parent)) return ''
+  const id = parent.id
+  return typeof id === 'string' || typeof id === 'number' ? String(id) : ''
 }
