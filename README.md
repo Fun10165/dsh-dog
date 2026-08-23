@@ -1,59 +1,102 @@
 # @dsh-external/dsh-dog
 
-> **v1.0.0 (stable)**: verification judgment has exactly two kernels — host-registered **scripts** (programmatic) and a single natural-language **instruction** (agentic). Workspaces, scheduling (watermark parallelism, programmatic leaves run unqueued), inheritance (terminal-run leftovers included), and orphan recovery (host restart → cancelled + inheritable settlements) are all settled. Protocol `schemaVersion` remains `0.9`. See [docs/architecture-0.9.md](docs/architecture-0.9.md) and [docs/CHANGELOG.md](docs/CHANGELOG.md).
+**DAG of Goals (DoG)** — turn a *non-formal* goal ("make a high-quality deck", "write a truly good article") into a DAG of independently verifiable subgoals, and let each subgoal be judged by its **own isolated verifier** before anything counts as done.
 
-DoG (DAG of Goals) is the first DeepSeek Harness prototype for graph-structured goals with trusted, snapshot-bound verification. The v0.1 boundary is intentionally verification-first: it validates and runs pre-existing artifact checks, but does not yet execute agent work or shell commands.
+> Protocol `schemaVersion` `0.9` · product **v1.0.0 stable** · [Changelog](docs/CHANGELOG.md) · [Spec](SPEC.md) · [Architecture 0.9](docs/architecture-0.9.md)
 
-Read [`SPEC.md`](./SPEC.md) for the current contract. The specification is committed separately from implementation changes so design corrections remain visible in git history.
+---
 
-## Build and install
+## The core idea (why DoG)
+
+A goal like "write a genuinely good article" has **no single, formal pass/fail rule** — nobody can run a command that returns "good". Deciding it requires judgment. DoG makes that decidable by structure, not by pretending it is a formula:
+
+1. **Decompose the non-formal goal into subgoals that can each be reviewed.** Each subgoal is still allowed to be *semantic* ("this paragraph has a claim and evidence") — the point is that it can be *reviewed separately*.
+2. **Every subgoal gets its own verifier, and the verifier is not the author.**
+   - **Agentic kernel** — an isolated subagent with the instruction as its only judgment standard: it reads the object, decides what evidence it needs, gathers it, and answers `{"verdict": "pass|fail|inconclusive", "evidence": …}`. It is context-isolated from the producer, so it cannot inherit the producer's blindspots.
+   - **Programmatic kernel** — a host-registered script in the library (`~/.dsh/dog/scripts/`) for the few checks that genuinely are precise rules (file exists, phrase blacklist, count thresholds). Script name may omit the `.js` extension.
+   - **A subtree must never be entirely programmatic** — if a whole branch can be decided by rules, it does not belong in a DAG-of-Goals; DoG exists for the judgment parts.
+3. **Composition, failure propagation, and the human backstop.**
+   - Composites combine children (`all` / `any` / `atLeast` / `not`) and may carry their **own whole-object assertion** — "each dimension passed, but as a whole article it still doesn't hold together" — judged after the subtree settles; the assertion can only *demote*, never promote.
+   - Failures propagate upwards until a node that tolerates them (`fatal` / `tolerable` / `degrade`); a `fatal` reaches the root, and **the root is never allowed to fail silently** — it surfaces to a human with the exact failing subgoal and its evidence.
+   - Anything the verifier cannot decide honestly settles `needs_human` (never guessed).
+4. **Every verdict is evidence-bound and reproducible.**
+   - `dog_create` captures immutable, content-addressed copies of the target (files; directories are packed into `.tar`), so verification runs against the exact bytes reviewed — not the later live file.
+   - Re-running an unchanged graph (object + judgment anchor identical) reuses prior settlements (`inherited`), so iterations cost tokens only for what actually changed.
+5. **True parallelism, real isolation.** Watermark scheduling (a finished verifier immediately frees its slot), programmatic leaves run unqueued, the agentic budget bounds only model-backed work, and each verifier works in its own isolated workspace that stays alive until the run settles.
+
+**What DoG is not**: a todo list, a CI runner, or a checklist of scripted rules. It is the *judgment* layer — the part of "is this done?" that previously had no structure and therefore got done (or skipped) by vibes.
+
+---
+
+## The graph (schemaVersion 0.9)
+
+```jsonc
+{
+  "schemaVersion": "0.9",
+  "id": "article-quality",
+  "root": "root",
+  "nodes": {
+    "root": { "kind": "composite", "constraint": "hard", "target": "article.md",
+              "completion": { "op": "all", "items": [ { "op": "ref", "id": "no-slop" } ] },
+              "verifier": { "mode": "agentic", "instruction": "Overall assertion…" } },
+    "no-slop": { "kind": "leaf", "constraint": "hard", "target": "article.md",
+                 "verifier": { "mode": "agentic", "instruction": "Check for AI-slop…" } }
+  },
+  "contains":  [ { "parent": "root", "child": "no-slop", "required": true, "failure": "fatal" } ],
+  "dependsOn": []   // e.g. [ { "source": "b", "target": "a" } ] = b depends on a (a runs first)
+}
+```
+
+- Two node kinds: **leaf** (one verifier) and **composite** (children combination + optional whole-object assertion).
+- Exact field reference and full examples: [`docs/skills/dog-v02-agentic-ci/SKILL.md`](docs/skills/dog-v02-agentic-ci/SKILL.md).
+- Ready-to-run demos: [`examples/`](examples/README.md) — `article-quality.graph.json` (four-dimension article gate) and `dog-smoke-multi.graph.json` (3-level tree + mixed agentic/programmatic + dependency edge).
+
+## Quick start
 
 ```sh
 pnpm install
 pnpm run check
 
-# Profiles are independent; install only the surfaces that should expose DoG.
+# Install the plugin onto the profiles that should expose DoG:
 dsh plugin --profile web add "$PWD"
 dsh plugin --profile headless add "$PWD"
-dsh --profile headless --dump-config
 ```
 
-The plugin's artifact access is configured **once, user-level**, in `~/.dsh/settings.yaml` under the `dog:` namespace — shared by every profile and not coupled to any profile patch:
+Configure **once, user-level**, in `~/.dsh/settings.yaml` under `dog:` (shared by every profile; agents must never edit it):
 
 ```yaml
 dog:
-  artifactRoots:
-    - { id: workspace, path: /absolute/approved/workspace }
-  artifactBindings:
-    - { id: deck, rootId: workspace, relativePath: deck.pptx }
-  storageDirectory: dog
+  workspaceRoot: /absolute/path/to/your/workspace   # capture source root
+  scriptsDirectory: dog/scripts                     # relative to $DSH_HOME, or absolute
+  storageDirectory: dog                             # ~/.dsh/dog (graphs, runs, artifacts)
 ```
 
-Profile patches must not contain `dsh-dog` configuration; the `dog:` settings section is the single source of truth (changed + restarted by the host, never by an agent).
+> Orphan runs left by a host restart are cancelled automatically at boot; their settled leaves stay inheritable by the next run.
 
-The plugin exposes `dog_validate`, `dog_create`, `dog_run`, and `dog_status`. Leaf verifiers declare a sandbox-relative `path`; they cannot supply or escape the configured sandbox root. `dog_create` captures immutable bytes content-addressed, and `dog_run` verifies those bytes rather than the later live file.
-
-In the web profile, the bundle adds a `DoG Graph` launcher through DSH's `shell.overlay` slot. The read-only debugger polls `GET /dog/api/snapshot` and shows immutable graph revisions, run history, containment/dependency edges, failure propagation, and verifier evidence without exposing artifact bytes. Start it with `dsh --profile web`; graph creation and execution still use the model-facing tools above.
-
-An end-to-end loader smoke test uses the headless profile after configuration:
+Start the harness and use the model-facing tools — `dog_validate` → `dog_create` → `dog_run` → `dog_wait`/`dog_status`:
 
 ```sh
-dsh --profile headless "Create a DoG for the configured deck artifact, run it, then read its status."
+dsh web            # web UI: graph debugger panel + tools
+dsh --profile headless "Create a DoG for article.md, run it, then read its status."
 ```
 
-## Agentic CI skill (v0.2)
+The **DoG debugger** panel shows immutable graph revisions, run history, containment/dependency edges (arrow = execution order), failure propagation, per-goal runtime traces, and verifier evidence — read-only, never exposing artifact bytes.
 
-The canonical end-user skill for the agentic CI surface (tool set, v0.2 graph
-schema, failure propagation, inherited semantics, trusted host facts) lives in
-[`docs/skills/dog-v02-agentic-ci/SKILL.md`](./docs/skills/dog-v02-agentic-ci/SKILL.md).
-This file is the single source of truth; the copy installed per-user in
-`~/.dsh/skills/` must be re-synced from it after every change:
+## Agentic CI skill
+
+The end-user skill (how-to for agents writing and running graphs) is [`docs/skills/dog-v02-agentic-ci/SKILL.md`](docs/skills/dog-v02-agentic-ci/SKILL.md) — the single source of truth. The per-user copy must be re-synced after every change:
 
 ```sh
-mkdir -p ~/.dsh/skills/dog-v02-agentic-ci
 cp docs/skills/dog-v02-agentic-ci/SKILL.md ~/.dsh/skills/dog-v02-agentic-ci/SKILL.md
 ```
 
-## v0.1 boundary
+## Repository layout
 
-This release validates graphs and verifies pre-existing files. It deliberately does not execute agent work, run model-authored commands, create worktrees, perform semantic merges, or automate human review. Those later layers must preserve the acceptance-plan and immutable-snapshot trust boundary in [`SPEC.md`](./SPEC.md).
+- [`src/`](src) — plugin: `graph.ts` (schema/validation), `core.ts` (engine: capture, scheduling, propagation, inheritance), `verifiers.ts` (two kernels), `storage.ts` (content-addressed store), `debug.ts` + `client/` (debugger UI), `tools.ts` (model-facing tools).
+- [`schemas/`](schemas/schema-0.2) — JSON schemas (graph/run/verification/runtime-event/report).
+- [`docs/`](docs) — `architecture-0.9.md` (normative 0.9 design), `CHANGELOG.md`, `skills/`.
+- [`examples/`](examples/README.md) — copy-paste demo graphs.
+
+## License
+
+BSD-3-Clause.
