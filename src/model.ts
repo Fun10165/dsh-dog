@@ -1,6 +1,6 @@
-/** Core JSON-compatible types for the DoG v0.2 Agentic CI protocol. */
+/** Core JSON-compatible types for the DoG v0.9 protocol. */
 
-export const DOG_SCHEMA_VERSION = '0.2' as const
+export const DOG_SCHEMA_VERSION = '0.9' as const
 
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }
@@ -49,18 +49,21 @@ export interface AtLeastExpr {
 
 export type BoolExpr = RefExpr | AllExpr | AnyExpr | NotExpr | AtLeastExpr
 
-export interface VerifierRef {
-  readonly id: string
-  readonly version: string
-}
+/** One of exactly two judgment kernels: a script, or a natural-language instruction. */
+export type VerifierShape =
+  | { readonly mode: 'programmatic'; readonly script: string }
+  | { readonly mode: 'agentic'; readonly instruction: string }
 
 export interface GoalNodeInput {
   readonly kind: GoalKind
   readonly title: string
   readonly constraint: ConstraintKind
+  /** Single file path or a directory/collection (engine packs it into .tar). */
+  readonly target: string
+  /** Leaf: required. Composite: optional whole-object assertion (runs after subtree settles). */
+  readonly verifier?: VerifierShape
+  /** Composite only: boolean combination of children. */
   readonly completion?: BoolExpr
-  readonly verifier?: VerifierRef
-  readonly verifierParams?: Record<string, JsonValue>
 }
 
 export interface ContainsEdge {
@@ -86,25 +89,16 @@ export interface DogGraphInput {
   readonly dependsOn: readonly DependencyEdge[]
 }
 
-export interface ArtifactRootBinding {
-  readonly id: string
-  readonly path: string
-}
-
-export interface ArtifactBinding {
-  readonly id: string
-  readonly rootId: string
-  readonly relativePath: string
-}
-
 export interface DogConfig {
-  readonly artifactRoots: readonly ArtifactRootBinding[]
-  readonly artifactBindings: readonly ArtifactBinding[]
   readonly storageDirectory: string
+  /** Sandbox/root for captured inputs: verifiers' objects come from this tree. */
+  readonly workspaceRoot: string
+  /** Host-registered script library directory (programmatic kernels). */
+  readonly scriptsDirectory: string
   readonly maxGraphNodes: number
   readonly maxExpressionNodes: number
   readonly maxExpressionDepth: number
-  readonly maxSnapshotBytes: number
+  readonly maxSandboxBytes: number
   readonly allowPartialRoot: boolean
   readonly maxConcurrentVerifications: number
   readonly revalidateThreshold: number
@@ -117,35 +111,31 @@ export interface GraphLimits {
   readonly maxExpressionDepth: number
 }
 
-export interface ArtifactSnapshot {
-  readonly artifactId: string
-  readonly snapshotId: string
+/** One captured object (file, or packed .tar for a collection). */
+export interface CapturedInput {
+  readonly path: string
+  readonly digest: string
   readonly exists: boolean
   readonly byteLength: number
   readonly sha256: string
+  /** True when the capture is a .tar of a directory/collection. */
+  readonly packed?: boolean
 }
 
-export interface ArtifactScope {
-  readonly kind: 'file'
-  readonly artifactId: string
-}
-
-export type GroundingDeclaration =
-  | { readonly kind: 'programmatic'; readonly extractorId: string; readonly schema: string }
-  | { readonly kind: 'non_programmatic' }
+/** Deterministic or agentic: judgment identity double-anchors incremental reuse. */
+export type JudgmentIdentity =
+  | { readonly mode: 'programmatic'; readonly script: string; readonly scriptDigest: string }
+  | { readonly mode: 'agentic'; readonly instructionHash: string }
 
 export interface AcceptancePlan {
   readonly goalId: GoalId
-  readonly verifierId: string
-  readonly verifierVersion: string
-  readonly artifactId: string
-  readonly rootBindingId: string
-  readonly relativePath: string
-  readonly snapshot: ArtifactSnapshot
-  readonly scope: ArtifactScope
-  readonly params: Record<string, JsonValue>
-  readonly grounding: GroundingDeclaration
-  readonly evidenceSchemaId: string
+  /** Which kernel judges this goal. */
+  readonly verifier: VerifierShape
+  /** Identity of the judgment source; part of the inheritance anchor. */
+  readonly judgment: JudgmentIdentity
+  readonly target: string
+  /** Captured object metadata (absent when target is missing/empty). */
+  readonly input?: CapturedInput
   readonly gmDigest?: string
 }
 
@@ -155,20 +145,15 @@ export interface VerificationRecord {
   readonly graphId: string
   readonly graphDigest: string
   readonly goalId: GoalId
-  readonly verifierId: string
-  readonly verifierVersion: string
-  readonly artifactId: string
-  readonly snapshotId: string
+  readonly judgment: JudgmentIdentity
   readonly gmDigest?: string
-  readonly passed: boolean
-  readonly observation: Record<string, JsonValue>
+  readonly passed: boolean | null
+  readonly evidence?: JsonValue
   readonly at: string
 }
 
 export interface GoalRuntimeVerifier {
-  readonly id: string
-  readonly version: string
-  readonly artifactId: string
+  readonly mode: 'programmatic' | 'agentic'
 }
 
 export interface GoalRuntimeError {
@@ -194,7 +179,6 @@ export type GoalRuntimePhase =
   | 'goal_settled'
   | 'run_warning'
 
-/** One append-only diagnostic event. It is operational context, never verifier evidence. */
 export interface GoalRuntimeEvent {
   readonly schemaVersion: '0.1'
   readonly runId: string
@@ -211,7 +195,6 @@ export interface GoalRuntimeEvent {
 
 export type GoalAgentRole = 'orchestrator' | 'verifier' | 'reviewer'
 
-/** Trusted session identity captured when an Agent binds itself to one goal. */
 export interface GoalAgentSessionRef {
   readonly sessionId: string
   readonly parentSessionId?: string
@@ -219,7 +202,6 @@ export interface GoalAgentSessionRef {
   readonly boundAt: string
 }
 
-/** Host-derived identity for the DSH tool call that started a run. */
 export interface RunInvocationContext {
   readonly callId: string
   readonly agentSessionId?: string
@@ -253,6 +235,8 @@ export interface DogRun {
   readonly runId: string
   readonly graphId: string
   readonly graphDigest: string
+  /** Calling session's cwd; verifier workspaces are allocated under it. */
+  readonly workspaceBaseDir?: string
   readonly state: 'running' | 'completed' | 'cancelled' | 'failed'
   readonly rootState?: RootTerminalState
   readonly invocation?: RunInvocationContext
@@ -263,7 +247,6 @@ export interface DogRun {
   readonly updatedAt: string
 }
 
-/** Lazy, per-goal debugger payload. Raw session transcripts and artifact bytes are deliberately excluded. */
 export interface GoalRuntimeTrace {
   readonly schemaVersion: '0.1'
   readonly runId: string

@@ -25,6 +25,11 @@
     "graphDigest": {
       "$ref": "#/$defs/sha256"
     },
+    "workspaceBaseDir": {
+      "description": "Calling session cwd; verifier workspaces are allocated under it when known.",
+      "type": "string",
+      "minLength": 1
+    },
     "state": {
       "enum": [
         "running",
@@ -144,12 +149,8 @@
             "graphId",
             "graphDigest",
             "goalId",
-            "verifierId",
-            "verifierVersion",
-            "artifactId",
-            "snapshotId",
+            "judgment",
             "passed",
-            "observation",
             "at"
           ],
           "properties": {
@@ -170,29 +171,48 @@
               "type": "string",
               "minLength": 1
             },
-            "verifierId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "verifierVersion": {
-              "type": "string",
-              "minLength": 1
-            },
-            "artifactId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "snapshotId": {
-              "$ref": "#/$defs/sha256"
+            "judgment": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "mode"
+              ],
+              "properties": {
+                "mode": {
+                  "enum": [
+                    "programmatic",
+                    "agentic"
+                  ]
+                },
+                "script": {
+                  "type": "string"
+                },
+                "scriptDigest": {
+                  "type": "string"
+                },
+                "instructionHash": {
+                  "type": "string"
+                }
+              }
             },
             "gmDigest": {
               "$ref": "#/$defs/sha256"
             },
             "passed": {
-              "type": "boolean"
+              "type": [
+                "boolean",
+                "null"
+              ]
             },
-            "observation": {
-              "type": "object"
+            "evidence": {
+              "type": [
+                "object",
+                "array",
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
             },
             "at": {
               "type": "string",

@@ -4,7 +4,6 @@ import { parseGraph } from '../graph.ts'
 import { isJsonValue } from '../model.ts'
 import type {
   AcceptancePlan,
-  ArtifactSnapshot,
   DogRun,
   GoalAgentRole,
   GoalAgentSessionRef,
@@ -15,6 +14,7 @@ import type {
   JsonValue,
   RootTerminalState,
   RunInvocationContext,
+  CapturedInput,
   VerificationRecord,
 } from '../model.ts'
 import type { DogDebugGraphRevision, DogDebugSnapshot } from '../debug.ts'
@@ -30,7 +30,7 @@ const ROOT_STATES = new Set<RootTerminalState>([
 const GOAL_AGENT_ROLES = new Set<GoalAgentRole>(['orchestrator', 'verifier', 'reviewer'])
 const RUNTIME_PHASES = new Set<GoalRuntimeEvent['phase']>([
   'goal_started', 'dependency_blocked', 'grounding_extracted', 'workspace_allocated',
-  'verifier_started', 'verifier_passed', 'verifier_failed', 'verifier_inconclusive',
+  'verifier_started', 'verifier_released', 'verifier_passed', 'verifier_failed', 'verifier_inconclusive',
   'composite_evaluated', 'result_inherited', 'structured_error', 'goal_settled', 'run_warning',
 ])
 
@@ -105,9 +105,7 @@ function parseRuntimeEvent(
   const gmDigest = root.gmDigest === undefined ? undefined : requireString(root.gmDigest, `${path}.gmDigest`)
   const verifierRecord = root.verifier === undefined ? undefined : requireRecord(root.verifier, `${path}.verifier`)
   const verifier = verifierRecord === undefined ? undefined : {
-    id: requireBoundedString(verifierRecord.id, `${path}.verifier.id`),
-    version: requireBoundedString(verifierRecord.version, `${path}.verifier.version`),
-    artifactId: requireBoundedString(verifierRecord.artifactId, `${path}.verifier.artifactId`),
+    mode: requireEnumValue(verifierRecord.mode, ['programmatic', 'agentic'], `${path}.verifier.mode`),
   }
   return {
     schemaVersion: '0.1',
@@ -160,36 +158,41 @@ function parseAcceptancePlans(value: unknown, path: string): Record<string, Acce
 
 function parseAcceptancePlan(value: unknown, path: string): AcceptancePlan {
   const root = requireRecord(value, path)
-  const artifactId = requireString(root.artifactId, `${path}.artifactId`)
-  const scope = requireRecord(root.scope, `${path}.scope`)
-  if (scope.kind !== 'file' || scope.artifactId !== artifactId) throw new Error(`${path}.scope is invalid`)
-  const snapshot = parseSnapshot(root.snapshot, `${path}.snapshot`)
-  if (snapshot.artifactId !== artifactId) throw new Error(`${path}.snapshot artifact mismatch`)
-  const groundingRecord = requireRecord(root.grounding, `${path}.grounding`)
-  const grounding = groundingRecord.kind === 'programmatic'
-    ? {
-      kind: 'programmatic' as const,
-      extractorId: requireString(groundingRecord.extractorId, `${path}.grounding.extractorId`),
-      schema: requireString(groundingRecord.schema, `${path}.grounding.schema`),
-    }
-    : { kind: 'non_programmatic' as const }
+  const input = root.input === undefined ? undefined : parseCapturedInput(root.input, `${path}.input`)
+  const verifier = parseVerifierShape(root.verifier ?? root.v09Verifier, `${path}.verifier`)
+  const judgment = parseJudgment(root.judgment, `${path}.judgment`)
   return {
     goalId: requireString(root.goalId, `${path}.goalId`),
-    verifierId: requireString(root.verifierId, `${path}.verifierId`),
-    verifierVersion: requireString(root.verifierVersion, `${path}.verifierVersion`),
-    artifactId,
-    rootBindingId: requireString(root.rootBindingId, `${path}.rootBindingId`),
-    relativePath: requireString(root.relativePath, `${path}.relativePath`),
-    snapshot,
-    scope: { kind: 'file', artifactId },
-    params: requireJsonRecord(root.params, `${path}.params`),
-    grounding,
-    evidenceSchemaId: requireString(root.evidenceSchemaId, `${path}.evidenceSchemaId`),
+    verifier,
+    judgment,
+    target: requireString(root.target, `${path}.target`),
+    ...(input === undefined ? {} : { input }),
     ...(root.gmDigest === undefined ? {} : { gmDigest: requireString(root.gmDigest, `${path}.gmDigest`) }),
   }
 }
 
-function parseSnapshot(value: unknown, path: string): ArtifactSnapshot {
+function parseVerifierShape(value: unknown, path: string): AcceptancePlan['verifier'] {
+  const record = requireRecord(value, path)
+  const mode = requireString(record.mode, `${path}.mode`)
+  if (mode === 'programmatic') {
+    return { mode: 'programmatic', script: requireString(record.script, `${path}.script`) }
+  }
+  if (mode === 'agentic') {
+    return { mode: 'agentic', instruction: requireString(record.instruction, `${path}.instruction`) }
+  }
+  throw new Error(`${path}.mode is invalid`)
+}
+
+function parseJudgment(value: unknown, path: string): AcceptancePlan['judgment'] {
+  const record = requireRecord(value, path)
+  const mode = requireString(record.mode, `${path}.mode`)
+  if (mode === 'programmatic') {
+    return { mode: 'programmatic', script: requireString(record.script, `${path}.script`), scriptDigest: requireString(record.scriptDigest, `${path}.scriptDigest`) }
+  }
+  return { mode: 'agentic', instructionHash: requireString(record.instructionHash, `${path}.instructionHash`) }
+}
+
+function parseCapturedInput(value: unknown, path: string): CapturedInput {
   const root = requireRecord(value, path)
   const exists = root.exists
   const byteLength = root.byteLength
@@ -198,8 +201,8 @@ function parseSnapshot(value: unknown, path: string): ArtifactSnapshot {
     throw new Error(`${path}.byteLength must be a non-negative safe integer`)
   }
   return {
-    artifactId: requireString(root.artifactId, `${path}.artifactId`),
-    snapshotId: requireString(root.snapshotId, `${path}.snapshotId`),
+    path: requireBoundedString(root.path, `${path}.path`),
+    digest: requireString(root.digest, `${path}.digest`),
     exists,
     byteLength,
     sha256: requireString(root.sha256, `${path}.sha256`),
@@ -295,22 +298,30 @@ function parseGoalAgentSession(value: unknown, path: string): GoalAgentSessionRe
 
 function parseVerification(value: unknown, path: string): VerificationRecord {
   const root = requireRecord(value, path)
-  if (typeof root.passed !== 'boolean') throw new Error(`${path}.passed must be a boolean`)
+  if (root.passed !== null && typeof root.passed !== 'boolean') throw new Error(`${path}.passed must be a boolean or null`)
   return {
     schemaVersion: '0.1' as const,
     goalId: requireString(root.goalId, `${path}.goalId`),
     runId: requireString(root.runId, `${path}.runId`),
     graphId: requireString(root.graphId, `${path}.graphId`),
     graphDigest: requireDigest(root.graphDigest, `${path}.graphDigest`),
-    verifierId: requireString(root.verifierId, `${path}.verifierId`),
-    verifierVersion: requireString(root.verifierVersion, `${path}.verifierVersion`),
-    artifactId: requireString(root.artifactId, `${path}.artifactId`),
-    snapshotId: requireString(root.snapshotId, `${path}.snapshotId`),
+    judgment: parseJudgment(root.judgment, `${path}.judgment`),
     ...(root.gmDigest === undefined ? {} : { gmDigest: requireString(root.gmDigest, `${path}.gmDigest`) }),
-    passed: root.passed,
-    observation: requireJsonRecord(root.observation, `${path}.observation`),
+    passed: root.passed === null ? null : root.passed,
+    ...(root.evidence === undefined ? {} : { evidence: requireJson(root.evidence, `${path}.evidence`) }),
     at: requireString(root.at, `${path}.at`),
   }
+}
+
+function requireEnumValue(value: unknown, allowed: readonly string[], path: string): 'programmatic' | 'agentic' {
+  const candidate = requireString(value, path)
+  if (!allowed.includes(candidate)) throw new Error(`${path} is invalid`)
+  return candidate as 'programmatic' | 'agentic'
+}
+
+function requireJson(value: unknown, path: string): JsonValue {
+  if (!isJsonValue(value)) throw new Error(`${path} must be JSON-compatible`)
+  return value
 }
 
 function parseGoalState(value: unknown, path: string): GoalState {
@@ -334,16 +345,6 @@ function requireDigest(value: unknown, path: string): string {
   const text = requireString(value, path)
   if (!DIGEST.test(text)) throw new Error(`${path} must be a SHA-256 digest`)
   return text
-}
-
-function requireJsonRecord(value: unknown, path: string): Record<string, JsonValue> {
-  const root = requireRecord(value, path)
-  const result: Record<string, JsonValue> = {}
-  for (const [key, item] of Object.entries(root)) {
-    if (!isJsonValue(item)) throw new Error(`${path}.${key} must be JSON-compatible`)
-    result[key] = item
-  }
-  return result
 }
 
 function requireRecord(value: unknown, path: string): Record<string, unknown> {

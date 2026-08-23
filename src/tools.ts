@@ -1,6 +1,15 @@
 /** Model-facing DoG tools over the verification-first engine. */
 
 import { defineTool, type JsonValue, type ToolDefinition } from '@deepseek-ai/dsh-tools'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
+
+declare module '@deepseek-ai/dsh-jobs' {
+  interface JobKindMap {
+    dog: 'dog'
+  }
+}
 import { DogEngine } from './core.ts'
 import { isJsonValue } from './model.ts'
 import type { CiReport, CompiledGraph, DogRun, GoalResult } from './model.ts'
@@ -9,10 +18,10 @@ export interface DogAgentLauncher {
   launch(input: {
     readonly label: string
     readonly prompt: string
-    readonly parent: unknown
+    readonly parent: Agent
     readonly signal: AbortSignal
-  }): Promise<{ readonly sessionId: string }>
-  interrupt?(sessionId: string, parent: unknown): void | Promise<void>
+  }): Promise<{ readonly sessionId: SessionId }>
+  interrupt?(sessionId: SessionId, parent: Agent): void | Promise<void>
 }
 
 export const DOG_VALIDATE_TOOL = 'dog_validate'
@@ -22,6 +31,7 @@ export const DOG_BIND_AGENT_TOOL = 'dog_bind_agent'
 export const DOG_DELEGATE_AGENT_TOOL = 'dog_delegate_agent'
 export const DOG_STATUS_TOOL = 'dog_status'
 export const DOG_CANCEL_TOOL = 'dog_cancel'
+export const DOG_WAIT_TOOL = 'dog_wait'
 
 const JSON_OUTPUT = {
   schema: { type: 'json' as const },
@@ -29,11 +39,14 @@ const JSON_OUTPUT = {
 }
 
 /** Build the complete DoG v0.1 tool surface around one engine instance. */
-export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
+export function createDogTools(
+  engine: () => DogEngine,
+  hostJobs: () => JobRegistry | undefined = () => undefined,
+): readonly ToolDefinition[] {
   return [
     defineTool({
       name: DOG_VALIDATE_TOOL,
-      description: 'Statically validate a DoG v0.2 graph. This does not write files, capture artifacts, or run goals.',
+      description: 'Statically validate a DoG v0.2 graph. This does not write files, capture sandbox files, or run goals.',
       parameters: {
         graph: { type: 'json', required: true, description: 'Complete JSON DoG graph using schemaVersion 0.2.' },
       },
@@ -41,19 +54,19 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
       isConcurrencySafe: () => true,
       execute: async (args, exec) => {
         exec.signal.throwIfAborted()
-        return jsonResult(engine.validate(args.graph))
+        return jsonResult(engine().validate(args.graph))
       },
     }),
     defineTool({
       name: DOG_CREATE_TOOL,
-      description: 'Compile and persist a valid DoG v0.2 graph, resolving only host-configured artifact IDs and capturing immutable snapshots.',
+      description: 'Compile and persist a valid DoG v0.2 graph, capturing verifier input files from the configured sandbox as immutable bytes.',
       parameters: {
         graph: { type: 'json', required: true, description: 'Complete JSON DoG graph using schemaVersion 0.2.' },
       },
       output: JSON_OUTPUT,
       async execute(args, exec) {
         exec.signal.throwIfAborted()
-        const compiled = await engine.create(args.graph)
+        const compiled = await engine().create(args.graph)
         exec.signal.throwIfAborted()
         return jsonResult(compiledGraphSummary(compiled))
       },
@@ -67,7 +80,7 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
       output: JSON_OUTPUT,
       async execute(args, exec) {
         exec.signal.throwIfAborted()
-        const run = await engine.startRun(args.graphId, {
+        const run = await engine().startRun(args.graphId, {
           invocation: {
             callId: String(exec.callId),
             ...(exec.agent === undefined ? {} : { agentSessionId: String(exec.agent.id) }),
@@ -79,7 +92,10 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
         })
         exec.signal.throwIfAborted()
         return jsonResult(Object.assign({}, runSummary(run), {
-          note: 'verification is running in the background; poll with dog_status',
+          note: 'verification runs in the background; agentic leaves spawn verifier Agents that live in THIS process. '
+            + 'If this is a one-shot launch (e.g. dsh --profile headless), the process exits after answering and '
+            + 'verifier workers are interrupted: background agentic verification requires a resident host process. '
+            + 'Poll with dog_status.',
         }))
       },
     }),
@@ -101,7 +117,7 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
       async execute(args, exec) {
         exec.signal.throwIfAborted()
         if (exec.agent === undefined) throw new Error('dog_bind_agent requires a trusted DSH Agent execution context')
-        const binding = await engine.bindAgent({
+        const binding = await engine().bindAgent({
           runId: args.runId,
           goalId: args.goalId,
           role: args.role,
@@ -128,9 +144,68 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
       isConcurrencySafe: () => true,
       async execute(args, exec) {
         exec.signal.throwIfAborted()
-        const run = await engine.status(args.runId)
+        const run = await engine().status(args.runId)
         exec.signal.throwIfAborted()
         return jsonResult(runSummary(run))
+      },
+    }),
+    defineTool({
+      name: DOG_WAIT_TOOL,
+      description: 'Wait for one DoG run to settle. Preferred path: when the host job service is available this registers a background '
+        + '"dog" job (returns instantly with jobId) and the harness notifies you automatically when the run completes — inspect with job_output, '
+        + 'cancel with job_kill. Fallback (no job service, e.g. a bare one-shot process): returns the current state instantly and you must '
+        + 'call dog_wait repeatedly until the state is terminal; each poll keeps the calling session and process alive, which protects '
+        + 'the verifier workers the run spawned. Always wait until the returned state is terminal before summarizing — finishing early '
+        + 'releases the workers. Same report shape as dog_status.',
+      parameters: {
+        runId: { type: 'string', required: true, description: 'Run ID returned by dog_run.' },
+        timeout: { type: 'number', description: 'Advisory total wait budget in seconds; not enforced (each call returns instantly).' },
+      },
+      output: JSON_OUTPUT,
+      isConcurrencySafe: () => true,
+      async execute(args, exec) {
+        exec.signal.throwIfAborted()
+        const run = await engine().status(args.runId)
+        exec.signal.throwIfAborted()
+        const jobs = hostJobs()
+        if (jobs !== undefined && run.state === 'running') {
+          const controller = new AbortController()
+          const done = engine().waitRun(args.runId, { signal: controller.signal, timeoutMs: 30 * 60_000 })
+            .then(settled => ({
+              status: 'completed' as const,
+              output: JSON.stringify(runSummary(settled)),
+            }))
+            .catch((error: unknown) => ({
+              status: controller.signal.aborted ? ('killed' as const) : ('failed' as const),
+              detail: String(error instanceof Error ? error.message : error).slice(0, 200),
+            }))
+          const jobId = jobs.start({
+            kind: 'dog',
+            label: `DoG wait ${String(args.runId).slice(0, 8)}`,
+            ...(exec.agent === undefined ? {} : { owner: exec.agent }),
+            run: () => ({
+              cancel: (reason?: string) => {
+                controller.abort(new Error(reason ?? 'cancelled'))
+              },
+              done,
+            }),
+          })
+          return jsonResult({
+            runId: run.runId,
+            graphId: run.graphId,
+            state: run.state,
+            jobId,
+            note: 'background wait job registered; the harness will notify you when the run completes (that is the wait). '
+              + 'NEVER call job_output with wait:true — a long wait gets interrupted by background notices and that interruption '
+              + 'is expected; if an unofficial job_output result comes back interrupted, just keep your current turn alive or reply with another dog_wait.',
+          })
+        }
+        return jsonResult(Object.assign({}, runSummary(run), {
+          ...(run.state === 'running' ? {
+            note: 'instant poll: the run is still running (this call returned immediately and cannot be interrupted). '
+              + 'Call dog_wait again, repeatedly, until the state is terminal.',
+          } : {}),
+        }))
       },
     }),
     defineTool({
@@ -146,7 +221,7 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
         exec.signal.throwIfAborted()
         const runId = args.runId
         const reason = typeof args.reason === 'string' && args.reason.length > 0 ? args.reason : 'cancelled by operator'
-        const cancelled = await engine.cancelRun(runId, reason)
+        const cancelled = await engine().cancelRun(runId, reason)
         exec.signal.throwIfAborted()
         return jsonResult(runSummary(cancelled))
       },
@@ -155,7 +230,7 @@ export function createDogTools(engine: DogEngine): readonly ToolDefinition[] {
 }
 
 /** Build the DoG-aware continuable Agent launcher once the host subagent service is available. */
-export function createDogDelegateAgentTool(engine: DogEngine, launcher: DogAgentLauncher): ToolDefinition {
+export function createDogDelegateAgentTool(engine: () => DogEngine, launcher: DogAgentLauncher): ToolDefinition {
   return defineTool({
     name: DOG_DELEGATE_AGENT_TOOL,
     description: 'Start a durable continuable DSH Agent for one DoG goal and bind its host-issued session identity to the run. The child remains directly interactive in the session UI after its first turn. Use this instead of a foreground or one-shot subagent for user-addressable DoG workers.',
@@ -176,7 +251,7 @@ export function createDogDelegateAgentTool(engine: DogEngine, launcher: DogAgent
       exec.signal.throwIfAborted()
       if (exec.agent === undefined) throw new Error('dog_delegate_agent requires a trusted DSH Agent execution context')
       const parentSessionId = String(exec.agent.id)
-      await engine.assertAgentCanDelegate({
+      await engine().assertAgentCanDelegate({
         runId: args.runId,
         goalId: args.goalId,
         parentSessionId,
@@ -190,7 +265,7 @@ export function createDogDelegateAgentTool(engine: DogEngine, launcher: DogAgent
       })
       if (child.sessionId.length === 0) throw new Error('DoG Agent launcher returned an empty child session ID')
       try {
-        const binding = await engine.bindAgent({
+        const binding = await engine().bindAgent({
           runId: args.runId,
           goalId: args.goalId,
           role: args.role,
@@ -221,13 +296,10 @@ function compiledGraphSummary(compiled: CompiledGraph): JsonValue {
     graphDigest: compiled.graphDigest,
     acceptancePlans: Object.values(compiled.acceptancePlans).map(plan => ({
       goalId: plan.goalId,
-      verifierId: plan.verifierId,
-      verifierVersion: plan.verifierVersion,
-      artifactId: plan.artifactId,
-      snapshotId: plan.snapshot.snapshotId,
-      exists: plan.snapshot.exists,
-      byteLength: plan.snapshot.byteLength,
-      evidenceSchemaId: plan.evidenceSchemaId,
+      mode: plan.verifier.mode,
+      ...(plan.verifier.mode === 'programmatic' ? { script: plan.verifier.script } : { instruction: plan.verifier.instruction }),
+      target: plan.target,
+      ...(plan.input === undefined ? {} : { inputPath: plan.input.path, digest: plan.input.digest, exists: plan.input.exists, byteLength: plan.input.byteLength }),
     })),
   }
 }
@@ -265,12 +337,10 @@ function goalReport(goalId: string, result: GoalResult): CiReport['goals'][numbe
     state: result.state,
     ...(verification === undefined ? {} : {
       verifier: {
-        id: verification.verifierId,
-        version: verification.verifierVersion,
-        artifactId: verification.artifactId,
+        mode: verification.judgment.mode,
       },
     }),
-    ...(verification === undefined ? {} : { evidence: [verification.observation] }),
+    ...(verification === undefined || verification.evidence === undefined ? {} : { evidence: [verification.evidence as unknown as Record<string, JsonValue>] }),
     ...(result.reason === undefined ? {} : { defect: result.reason }),
   }
 }

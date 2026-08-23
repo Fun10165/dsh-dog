@@ -66,14 +66,13 @@
         "verifier": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "version"],
+          "required": ["mode"],
           "properties": {
-            "id": { "type": "string", "minLength": 1 },
-            "version": { "type": "string", "minLength": 1 }
+            "mode": { "enum": ["programmatic", "agentic"] }
           }
         },
         "evidence": {
-          "description": "Proof satisfying the contract's evidence schema. References resolve into the artifact store; never raw artifact bytes.",
+          "description": "Proof satisfying the contract's evidence schema. References resolve into the sandbox store; never raw artifact bytes.",
           "type": "array",
           "items": { "type": "object" }
         },

@@ -1,204 +1,81 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { DogEngine } from '../src/core.ts'
-import type { DogConfig, DogGraphInput } from '../src/model.ts'
-import { DogRepository } from '../src/storage.ts'
-import { createBuiltinVerifierRegistry, type AgenticVerifierRunner, type Settlement } from '../src/verifiers.ts'
-import { injectAgenticAudit } from './helpers.ts'
+/** DoG v0.9 agentic kernel contract: identity, instruction delivery, verdict mapping. */
 
-const temporaryRoots: string[] = []
+import { writeFile, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { describe, it, expect, afterEach } from 'vitest'
+import { DogEngine } from '../src/core.ts'
+import type { DogConfig } from '../src/model.ts'
+import { DogRepository } from '../src/storage.ts'
+import { compositeNode, ensureScripts, graph, leafNode, mkConfig, temporaryRoot } from './helpers.ts'
+
+const roots: string[] = []
 
 afterEach(async () => {
-  await new Promise(resolve => setTimeout(resolve, 150))
-  await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true }).catch(() => undefined)))
+  await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 
-async function fixture(): Promise<{ root: string; dog: DogEngine }> {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-dog-agentic-'))
-  temporaryRoots.push(root)
-  await writeFile(join(root, 'artifact.txt'), 'verified artifact')
-  const config: DogConfig = {
-    artifactRoots: [{ id: 'workspace', path: root }],
-    artifactBindings: [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }],
-    storageDirectory: 'dog',
-    maxGraphNodes: 32,
-    maxExpressionNodes: 64,
-    maxExpressionDepth: 16,
-    maxSnapshotBytes: 1024 * 1024,
-    allowPartialRoot: false,
-    maxConcurrentVerifications: 1,
-    revalidateThreshold: 1,
-    gmDigestAlgo: 'sha256',
-  }
+async function setup(verdict: 'pass' | 'fail' = 'pass'): Promise<{ root: string; dog: DogEngine; seenInstructions: string[] }> {
+  const root = await temporaryRoot()
+  roots.push(root)
+  await ensureScripts(root)
+  await writeFile(join(root, 'artifact.txt'), 'verified')
+  const config: DogConfig = mkConfig(root, join(root, 'scripts'))
   const repository = new DogRepository(join(root, '.dog-store'))
+  const seenInstructions: string[] = []
   const dog = new DogEngine({
     config,
     repository,
     now: () => new Date('2026-08-23T00:00:00.000Z'),
     nextRunId: () => `run-${Math.random().toString(36).slice(2)}`,
   })
-  return { root, dog }
-}
-
-function agenticGraph(): DogGraphInput {
-  return injectAgenticAudit({
-    schemaVersion: '0.2',
-    id: 'agentic-demo',
-    root: 'root',
-    nodes: {
-      root: { kind: 'composite', title: 'agentic gate', constraint: 'hard', completion: { op: 'ref', id: 'audit' } },
-      audit: {
-        kind: 'leaf',
-        title: 'agentic check',
-        constraint: 'hard',
-        verifier: { id: 'vision.overlap', version: '1' },
-        verifierParams: { artifactId: 'artifact', target: 'smoke region', requirement: 'No text overlap in the smoke region' },
-      },
+  dog.setKernels(
+    async () => ({ state: 'pass' as const, evidence: { stub: 'programmatic' } }),
+    async instruction => {
+      seenInstructions.push(instruction)
+      return { state: verdict as 'pass' | 'fail', evidence: { fromRunner: true, verdict } }
     },
-    contains: [{ parent: 'root', child: 'audit', required: true, failure: 'fatal' }],
-    dependsOn: [],
-  })
+  )
+  return { root, dog, seenInstructions }
 }
 
-describe('agentic Verifier Agent execution', () => {
-  it('routes the contract, plan, workspace, parent, and signal into the runner', async () => {
-    const { dog } = await fixture()
-    const parent = { id: 'parent-session' }
-    const seen = new Map<string, unknown>()
-    const registry = createBuiltinVerifierRegistry({
-      agenticRunner: {
-        async run(input): Promise<Settlement> {
-          seen.set('contractId', input.contract.id)
-          seen.set('goalId', input.plan.goalId)
-          seen.set('artifactId', input.plan.artifactId)
-          seen.set('parent', input.parent)
-          seen.set('signalIsAbortSignal', input.signal instanceof AbortSignal)
-          seen.set('runIdIsString', typeof input.runId === 'string' && input.runId.length > 0)
-          seen.set('workspaceCreated', await import('node:fs/promises').then(fs => fs.stat(input.workspace.path).then(() => true, () => false)))
-          return { state: 'pass', observation: { checked: true, region: String((input.plan.params.target ?? '')) } }
-        },
-      } satisfies AgenticVerifierRunner,
-    })
-    dog.setVerifierRegistry(registry)
-    const compiled = await dog.create(agenticGraph())
-    const run = await dog.run(compiled.input.id, { invocation: { callId: 'call-1' }, agent: parent })
+describe('v0.9 agentic kernel', () => {
+  it('delivers the leaf instruction verbatim and maps a pass verdict to success', async () => {
+    const { dog, seenInstructions } = await setup('pass')
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'audit' }),
+      audit: leafNode({ verifier: { mode: 'agentic', instruction: '检查模板腔,自己想怎么做' } }),
+    }, [{ parent: 'root', child: 'audit', required: true, failure: 'fatal' }]))
+    const run = await dog.run(compiled.input.id)
     expect(run.rootState).toBe('success')
-    expect(run.goals.audit?.state).toBe('success')
-    expect(seen.get('contractId')).toBe('vision.overlap')
-    expect(seen.get('goalId')).toBe('audit')
-    expect(seen.get('artifactId')).toBe('artifact')
-    expect(seen.get('parent')).toBe(parent)
-    expect(seen.get('signalIsAbortSignal')).toBe(true)
-    expect(seen.get('runIdIsString')).toBe(true)
-    expect(seen.get('workspaceCreated')).toBe(true)
+    expect(seenInstructions).toEqual(['检查模板腔,自己想怎么做'])
+    expect(run.goals.audit?.verification?.evidence).toMatchObject({ fromRunner: true })
   })
 
-  it('propagates an agentic failure as a fatal child result', async () => {
-    const { dog } = await fixture()
-    const registry = createBuiltinVerifierRegistry({
-      agenticRunner: {
-        async run(): Promise<Settlement> {
-          return { state: 'fail', observation: { overlapRatio: 0.31, region: 'smoke region' } }
-        },
-      },
-    })
-    dog.setVerifierRegistry(registry)
-    const compiled = await dog.create(agenticGraph())
+  it('maps a fail verdict to failure with free-form evidence preserved', async () => {
+    const { dog } = await setup('fail')
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'audit' }),
+      audit: leafNode({ verifier: { mode: 'agentic', instruction: '检查' } }),
+    }, [{ parent: 'root', child: 'audit', required: true, failure: 'fatal' }]))
     const run = await dog.run(compiled.input.id)
+    console.log('DBG_RUN', JSON.stringify(run.goals))
     expect(run.goals.audit?.state).toBe('failure')
-    expect(run.goals.audit?.verification?.passed).toBe(false)
     expect(run.rootState).toBe('failure')
+    expect(run.goals.audit?.verification?.judgment).toEqual({ mode: 'agentic', instructionHash: expect.stringMatching(/^sha256:/) })
   })
 
-  it('settles inconclusive as needs_human when no runner is installed', async () => {
-    const { dog } = await fixture()
-    const compiled = await dog.create(agenticGraph())
+  it('supports composite whole-object assertions after the subtree settles', async () => {
+    const { dog, seenInstructions } = await setup('fail')
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'all', items: [{ op: 'ref', id: 'leaf' }] }, {
+        title: 'whole', constraint: 'hard',
+        verifier: { mode: 'agentic', instruction: '整体断言:检查是否协调一致' },
+      }),
+      leaf: leafNode({}),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
     const run = await dog.run(compiled.input.id)
-    expect(run.goals.audit?.state).toBe('needs_human')
-    expect(run.rootState).toBe('needs_replan')
-  })
-
-  it('marks prior running runs of the same graph as cancelled on a new run', async () => {
-    const { dog } = await fixture()
-    const repository = (dog as unknown as { repository: DogRepository }).repository
-    const zombieAt = '2026-08-23T01:00:00.000Z'
-    await repository.saveRun({
-      runId: 'run-zombie',
-      graphId: 'agentic-demo',
-      graphDigest: '0000000000000000000000000000000000000000000000000000000000000000',
-      state: 'running',
-      gmDigests: {},
-      goals: {},
-      createdAt: zombieAt,
-      updatedAt: zombieAt,
-    })
-    const compiled = await dog.create(agenticGraph())
-    // The zombie is superseded by the new run even though its runId differs.
-    const run = await dog.run(compiled.input.id)
-    expect(run.runId).not.toBe('run-zombie')
-    const zombie = await repository.loadRun('run-zombie')
-    expect(zombie.state).toBe('cancelled')
-    expect(zombie.rootState).toBe('cancelled')
-  })
-
-  it('startRun returns immediately and the run completes in the background', async () => {
-    const { dog } = await fixture()
-    const repository = (dog as unknown as { repository: DogRepository }).repository
-    const compiled = await dog.create(agenticGraph())
-    const started = await dog.startRun(compiled.input.id, { invocation: { callId: 'call-bg' } })
-    expect(started.state).toBe('running')
-    // poll until the background execution settles (default registry: inconclusive -> needs_replan)
-    const deadline = Date.now() + 5_000
-    let settled = started
-    while (Date.now() < deadline) {
-      const { promise, resolve } = Promise.withResolvers<void>()
-      setTimeout(resolve, 100)
-      await promise
-      settled = await repository.loadRun(started.runId)
-      if (settled.state !== 'running') break
-    }
-    expect(settled.state).toBe('completed')
-    expect(settled.goals.audit?.state).toBe('needs_human')
-  })
-
-  it('annotateRun persists a bounded warning and recordVerifierLifecycle appends events', async () => {
-    const { dog } = await fixture()
-    const repository = (dog as unknown as { repository: DogRepository }).repository
-    const compiled = await dog.create(agenticGraph())
-    const run = await dog.run(compiled.input.id)
-    await dog.annotateRun(run.runId, 'verifier binding failed: no trusted invocation agent session')
-    await dog.recordVerifierLifecycle(run.runId, 'audit', 'verifier_released', 'session-worker-1')
-    const reread = await repository.loadRun(run.runId)
-    expect(reread.runtimeWarning).toContain('verifier binding failed')
-    const events = await repository.loadGoalRuntimeEvents(run.runId, 'audit')
-    expect(events.some(event => event.phase === 'verifier_released')).toBe(true)
-  })
-
-  it('reapOrphanRuns cancels runs whose heartbeat expired', async () => {
-    const { dog } = await fixture()
-    const repository = (dog as unknown as { repository: DogRepository }).repository
-    const compiled = await dog.create(agenticGraph())
-    const run = await dog.run(compiled.input.id)
-    // backdate the run to simulate a host restart after long silence
-    const staleAt = '2026-08-22T00:00:00.000Z'
-    await repository.saveRun({ ...run, state: 'running', updatedAt: staleAt })
-    const reaped = await dog.reapOrphanRuns(600_000)
-    expect(reaped).toBe(1)
-    const reread = await repository.loadRun(run.runId)
-    expect(reread.state).toBe('cancelled')
-    expect(reread.rootState).toBe('cancelled')
-    expect(reread.runtimeWarning).toContain('orphaned')
-  })
-
-  it('cancelRun stops the run heartbeat and marks it cancelled', async () => {
-    const { dog } = await fixture()
-    const compiled = await dog.create(agenticGraph())
-    const started = await dog.startRun(compiled.input.id, { invocation: { callId: 'call-cancel' } })
-    const cancelled = await dog.cancelRun(started.runId, 'operator request')
-    expect(cancelled.state).toBe('cancelled')
-    expect(cancelled.rootState).toBe('cancelled')
-    expect(cancelled.runtimeWarning).toContain('operator request')
+    expect(run.goals.leaf?.state).toBe('success')
+    expect(run.goals.root?.state).toBe('failure')
+    expect(seenInstructions).toContain('整体断言:检查是否协调一致')
   })
 })

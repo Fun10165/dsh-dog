@@ -29,7 +29,11 @@ export async function buildDogDebugSnapshot(
   repository: DogRepository,
   now: () => Date = () => new Date(),
 ): Promise<DogDebugSnapshot> {
-  const [graphs, runs] = await Promise.all([repository.listGraphs(), repository.listRuns()])
+  const [allGraphs, runs] = await Promise.all([repository.listGraphs(), repository.listRuns()])
+  // 0.9 re-shaped the judgment layer; pre-0.9 graphs no longer parse under the
+  // 0.9 schema and would poison the whole panel snapshot. Keep them on disk as
+  // history (runs unchanged) but never surface them as current revisions.
+  const graphs = allGraphs.filter(graph => graph.input.schemaVersion === '0.9')
   const graphIds = [...new Set(graphs.map(graph => graph.input.id))]
   const settled = await Promise.allSettled(graphIds.map(id => repository.loadGraph(id)))
   const currentDigests = new Set(settled

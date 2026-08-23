@@ -1,41 +1,40 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/dsh-external/dsh-dog/schemas/schema-0.2/verification.schema.json",
-  "title": "DoG v0.2 trusted verification record (verifications/<run-id>.jsonl)",
-  "description": "Append-only trusted verifier result; one JSON object per line. Machine-readable counterpart of SPEC §6.3 + §11. A record named by runId+goalId+gmDigest+snapshotId is the reuse boundary for inheritance.",
+  "$id": "https://github.com/dsh-external/dsh-dog/schemas/schema-0.9/verification.schema.json",
+  "title": "DoG v0.9 trusted verification record",
+  "description": "One judgment outcome. Machine-readable counterpart of SPEC §6 + §8.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schemaVersion", "runId", "graphId", "graphDigest", "goalId",
-    "verifierId", "verifierVersion", "artifactId", "snapshotId",
-    "gmDigest", "passed", "observation", "at"
-  ],
+  "required": ["schemaVersion", "runId", "graphId", "graphDigest", "goalId", "judgment", "passed", "at"],
   "properties": {
     "schemaVersion": { "const": "0.1" },
     "runId": { "$ref": "#/$defs/uuid" },
     "graphId": { "type": "string", "minLength": 1 },
     "graphDigest": { "$ref": "#/$defs/sha256" },
     "goalId": { "type": "string", "minLength": 1 },
-    "verifierId": { "type": "string", "minLength": 1 },
-    "verifierVersion": { "type": "string", "minLength": 1 },
-    "artifactId": { "type": "string", "minLength": 1 },
-    "snapshotId": { "$ref": "#/$defs/sha256" },
-    "gmDigest": { "$ref": "#/$defs/sha256" },
-    "passed": { "type": "boolean" },
-    "observation": {
-      "description": "Contract-specific, schema-valid evidence (never a bare {passed: true}; never verifier-selected scope).",
-      "type": "object"
+    "judgment": {
+      "description": "Identity of the judgment source (script+digest, or instruction hash).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["programmatic", "agentic"] },
+        "script": { "type": "string" },
+        "scriptDigest": { "type": "string" },
+        "instructionHash": { "type": "string" }
+      }
     },
-    "at": { "type": "string", "format": "date-time" }
+    "gmDigest": { "type": "string" },
+    "passed": { "type": ["boolean", "null"] },
+    "evidence": {
+      "description": "Free-form JSON evidence; shape is decided by the judge.",
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    },
+    "at": { "$ref": "#/$defs/iso8601" }
   },
   "$defs": {
-    "uuid": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-    },
-    "sha256": {
-      "type": "string",
-      "pattern": "^([0-9a-f]{64}|sha256:[0-9a-f]{64})$"
-    }
+    "uuid": { "type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "iso8601": { "type": "string", "format": "date-time" }
   }
 }

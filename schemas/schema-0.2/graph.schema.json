@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/dsh-external/dsh-dog/schemas/schema-0.2/graph.schema.json",
-  "title": "DoG v0.2 graph input (dog_validate / dog_create payload)",
-  "description": "Verification graph authored by the planning agent. Machine-readable counterpart of SPEC §4. Graph-level semantic rules (reference resolution, acyclicity, programmatic-subtree rejection) are enforced by the compiler, not expressible here.",
+  "$id": "https://github.com/dsh-external/dsh-dog/schemas/schema-0.9/graph.schema.json",
+  "title": "DoG v0.9 graph input (dog_validate / dog_create payload)",
+  "description": "Verification graph authored by the planning agent. Machine-readable counterpart of SPEC §4 / §1. Graph-level semantic rules (reference resolution, acyclicity, leaf-requires-verifier) are enforced by the compiler, not expressible here.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "id", "root", "nodes", "contains", "dependsOn"],
   "properties": {
-    "schemaVersion": { "const": "0.2" },
+    "schemaVersion": { "const": "0.9" },
     "id": { "$ref": "#/$defs/asciiId" },
     "root": { "$ref": "#/$defs/goalId" },
     "nodes": {
@@ -37,28 +37,30 @@
     "node": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "title", "constraint"],
+      "required": ["kind", "title", "constraint", "target"],
       "properties": {
         "kind": { "enum": ["leaf", "composite"] },
         "title": { "type": "string", "minLength": 1 },
         "constraint": { "enum": ["hard", "soft"] },
+        "target": {
+          "description": "Single file, or a directory/collection packed into .tar by the engine.",
+          "type": "string",
+          "minLength": 1
+        },
+        "verifier": {
+          "description": "Leaf: required. Composite: optional whole-object assertion (runs after the subtree settles).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": { "enum": ["programmatic", "agentic"] },
+            "script": { "type": "string", "minLength": 1 },
+            "instruction": { "type": "string", "minLength": 1 }
+          }
+        },
         "completion": {
           "description": "Required when kind=composite; forbidden when kind=leaf.",
           "$ref": "#/$defs/expr"
-        },
-        "verifier": {
-          "description": "Required when kind=leaf.",
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["id", "version"],
-          "properties": {
-            "id": { "type": "string", "minLength": 1 },
-            "version": { "type": "string", "minLength": 1 }
-          }
-        },
-        "verifierParams": {
-          "type": "object",
-          "description": "Declarative parameters checked by the contract registry (example: artifactId, target, requirement)."
         }
       },
       "allOf": [
@@ -71,59 +73,40 @@
         },
         {
           "if": { "properties": { "kind": { "const": "composite" } }, "required": ["kind"] },
-          "then": {
-            "required": ["completion"],
-            "not": { "required": ["verifier"] }
-          }
+          "then": { "required": ["completion"] }
         }
       ]
     },
     "expr": {
-      "oneOf": [
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": { "enum": ["ref", "all", "any", "not", "atLeast"] },
+        "id": { "$ref": "#/$defs/goalId" },
+        "count": { "type": "integer", "minimum": 1 },
+        "item": { "$ref": "#/$defs/expr" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/expr" }
+        }
+      },
+      "allOf": [
         {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["op", "id"],
-          "properties": {
-            "op": { "const": "ref" },
-            "id": { "$ref": "#/$defs/goalId" }
-          }
+          "if": { "properties": { "op": { "const": "ref" } }, "required": ["op"] },
+          "then": { "required": ["id"], "not": { "anyOf": [{ "required": ["items"] }, { "required": ["item"] }, { "required": ["count"] }] } }
         },
         {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["op", "items"],
-          "properties": {
-            "op": { "enum": ["all", "any"] },
-            "items": {
-              "type": "array",
-              "minItems": 1,
-              "items": { "$ref": "#/$defs/expr" }
-            }
-          }
+          "if": { "properties": { "op": { "const": "not" } }, "required": ["op"] },
+          "then": { "required": ["item"], "not": { "anyOf": [{ "required": ["items"] }, { "required": ["id"] }, { "required": ["count"] }] } }
         },
         {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["op", "item"],
-          "properties": {
-            "op": { "const": "not" },
-            "item": { "$ref": "#/$defs/expr" }
-          }
+          "if": { "properties": { "op": { "const": "atLeast" } }, "required": ["op"] },
+          "then": { "required": ["count", "items"], "not": { "anyOf": [{ "required": ["id"] }, { "required": ["item"] }] } }
         },
         {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["op", "count", "items"],
-          "properties": {
-            "op": { "const": "atLeast" },
-            "count": { "type": "integer", "minimum": 1 },
-            "items": {
-              "type": "array",
-              "minItems": 1,
-              "items": { "$ref": "#/$defs/expr" }
-            }
-          }
+          "if": { "properties": { "op": { "enum": ["all", "any"] } }, "required": ["op"] },
+          "then": { "required": ["items"], "not": { "anyOf": [{ "required": ["id"] }, { "required": ["item"] }, { "required": ["count"] }] } }
         }
       ]
     },
@@ -136,12 +119,8 @@
         "child": { "$ref": "#/$defs/goalId" },
         "required": { "type": "boolean" },
         "failure": { "enum": ["fatal", "tolerable", "degrade"] },
-        "degradeTo": {
-          "description": "Optional approved sibling target when failure=degrade.",
-          "$ref": "#/$defs/goalId"
-        }
-      },
-      "unevaluatedProperties": false
+        "degradeTo": { "$ref": "#/$defs/goalId" }
+      }
     },
     "dependency": {
       "type": "object",
@@ -152,7 +131,7 @@
         "target": { "$ref": "#/$defs/goalId" },
         "data": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string" }
         }
       }
     }

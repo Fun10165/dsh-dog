@@ -8,10 +8,8 @@ import type {
   GoalId,
   GoalNodeInput,
   GraphLimits,
-  JsonValue,
-  VerifierRef,
 } from './model.ts'
-import { DOG_SCHEMA_VERSION, isJsonValue } from './model.ts'
+import { DOG_SCHEMA_VERSION } from './model.ts'
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
 
@@ -69,23 +67,25 @@ function parseNodes(
     if (!ID_PATTERN.test(id)) errors.push(`$.nodes.${id}: invalid goal ID`)
     const node = asRecord(record[id], `$.nodes.${id}`, errors)
     if (node === undefined) continue
-    checkExactKeys(node, ['kind', 'title', 'constraint', 'completion', 'verifier', 'verifierParams'], `$.nodes.${id}`, errors)
+    checkExactKeys(node, ['kind', 'title', 'constraint', 'target', 'completion', 'verifier'], `$.nodes.${id}`, errors)
     const kind = parseEnum(node.kind, ['leaf', 'composite'] as const, `$.nodes.${id}.kind`, errors)
     const title = parseNonEmptyString(node.title, `$.nodes.${id}.title`, errors)
     const constraint = parseEnum(node.constraint, ['hard', 'soft'] as const, `$.nodes.${id}.constraint`, errors)
+    const target = parseNonEmptyString(node.target, `$.nodes.${id}.target`, errors)
     const verifier = parseVerifier(node.verifier, `$.nodes.${id}.verifier`, errors)
-    const params = parseJsonObject(node.verifierParams, `$.nodes.${id}.verifierParams`, errors)
-    if (kind === undefined || title === undefined || constraint === undefined) continue
+    if (kind === undefined || title === undefined || constraint === undefined || target === undefined) continue
     if (kind === 'leaf' && verifier === undefined) errors.push(`$.nodes.${id}: leaf requires verifier`)
-    if (kind === 'composite' && verifier !== undefined) errors.push(`$.nodes.${id}: composite verifier is not supported in v0.2`)
+    if (kind === 'composite' && verifier !== undefined) {
+      // Optional whole-object assertion: allowed and runs after the subtree settles.
+    }
     if (kind === 'composite' && node.completion === undefined) errors.push(`$.nodes.${id}: composite requires completion`)
     if (kind === 'leaf' && node.completion !== undefined) errors.push(`$.nodes.${id}: leaf cannot declare completion`)
     const nodeValue = {
       kind,
       title,
       constraint,
+      target,
       ...(verifier === undefined ? {} : { verifier }),
-      ...(params === undefined ? {} : { verifierParams: params }),
       ...(kind === 'composite' && node.completion !== undefined ? { completion: node.completion } : {}),
     } as unknown as GoalNodeInput
     nodes[id] = nodeValue
@@ -137,27 +137,20 @@ function parseDependencies(value: unknown, errors: string[]): DependencyEdge[] |
   return edges
 }
 
-function parseVerifier(value: unknown, path: string, errors: string[]): VerifierRef | undefined {
+function parseVerifier(value: unknown, path: string, errors: string[]): GoalNodeInput['verifier'] | undefined {
   if (value === undefined) return undefined
   const record = asRecord(value, path, errors)
   if (record === undefined) return undefined
-  checkExactKeys(record, ['id', 'version'], path, errors)
-  const id = parseNonEmptyString(record.id, `${path}.id`, errors)
-  const version = parseNonEmptyString(record.version, `${path}.version`, errors)
-  if (id === undefined || version === undefined) return undefined
-  return { id, version }
-}
-
-function parseJsonObject(value: unknown, path: string, errors: string[]): Record<string, JsonValue> | undefined {
-  if (value === undefined) return undefined
-  const record = asRecord(value, path, errors)
-  if (record === undefined) return undefined
-  const result: Record<string, JsonValue> = {}
-  for (const [key, candidate] of Object.entries(record)) {
-    if (!isJsonValue(candidate)) errors.push(`${path}.${key}: must be a finite JSON value`)
-    else result[key] = candidate
+  const mode = parseEnum(record.mode, ['programmatic', 'agentic'] as const, `${path}.mode`, errors)
+  if (mode === undefined) return undefined
+  if (mode === 'programmatic') {
+    checkExactKeys(record, ['mode', 'script'], path, errors)
+    const script = parseNonEmptyString(record.script, `${path}.script`, errors)
+    return script === undefined ? undefined : { mode: 'programmatic', script }
   }
-  return result
+  checkExactKeys(record, ['mode', 'instruction'], path, errors)
+  const instruction = parseNonEmptyString(record.instruction, `${path}.instruction`, errors)
+  return instruction === undefined ? undefined : { mode: 'agentic', instruction }
 }
 
 function validateGraphReferences(

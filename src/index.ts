@@ -2,21 +2,29 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { } from '@deepseek-ai/dsh-client-connection'
+import { execFileSync } from 'node:child_process'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { AgentRegistry } from '@deepseek-ai/dsh-agent'
+import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { SubagentRuntime, SubagentInterruptAuthority } from '@deepseek-ai/dsh-subagent'
+import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+import { isAbsolute, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
-import { DogEngine } from './core.ts'
+import { DogEngine, resolveScriptPath } from './core.ts'
 import { DOG_DEBUG_RPC_CHANNEL, createDogDebugRpcHandler } from './debug.ts'
-import type { ArtifactBinding, ArtifactRootBinding } from './model.ts'
 import { loadSchemaSet } from './schema.ts'
 import { DogRepository } from './storage.ts'
 import { createDogDelegateAgentTool, createDogTools } from './tools.ts'
+import { isJsonValue } from './model.ts'
 import { WorkspaceManager } from './workspace.ts'
-import { createBuiltinVerifierRegistry, type AgenticVerifierRunner, type VerifierContract } from './verifiers.ts'
-import type { AcceptancePlan } from './model.ts'
-import { waitForSettlement } from './verifier-file.ts'
-import { renderDeckPages } from './render.ts'
+import { waitForSettlementFlexible } from './verifier-file.ts'
+import type { AgenticRunner, ProgrammaticRunner, Verdict } from './verifiers.ts'
+
 
 export { DogEngine } from './core.ts'
 export {
@@ -30,8 +38,7 @@ export {
 export type { DogDebugGraphRevision, DogDebugSnapshot } from './debug.ts'
 export { DogValidationError, parseGraph } from './graph.ts'
 export { evaluateBoolExpr, parseBoolExpr } from './logic.ts'
-export { createBuiltinExtractorRegistry } from './extractors.ts'
-export { VerifierContractRegistry, createBuiltinVerifierRegistry } from './verifiers.ts'
+export { runPlan, type AgenticRunner, type ProgrammaticRunner, type Verdict } from './verifiers.ts'
 export { WorkspaceManager } from './workspace.ts'
 export { loadSchemaSet } from './schema.ts'
 export {
@@ -40,6 +47,7 @@ export {
   DOG_DELEGATE_AGENT_TOOL,
   DOG_RUN_TOOL,
   DOG_STATUS_TOOL,
+  DOG_WAIT_TOOL,
   DOG_VALIDATE_TOOL,
   createDogDelegateAgentTool,
   createDogTools,
@@ -53,13 +61,15 @@ export const inject = ['tools']
 
 /** Host-owned deployment configuration. */
 export interface Config {
-  artifactRoots: ArtifactRootBinding[]
-  artifactBindings: ArtifactBinding[]
   storageDirectory: string
+  /** Verifier workspace root (WorkspaceManager.baseDir): verifiers only read files inside this tree. */
+  workspaceRoot: string
+  /** Host-registered programmatic script library (relative to DSH_HOME, or absolute). */
+  scriptsDirectory: string
   maxGraphNodes: number
   maxExpressionNodes: number
   maxExpressionDepth: number
-  maxSnapshotBytes: number
+  maxSandboxBytes: number
   allowPartialRoot: boolean
   maxConcurrentVerifications: number
   revalidateThreshold: number
@@ -70,20 +80,13 @@ export interface Config {
 
 /** Loader-validated DoG deployment configuration. */
 export const Config: z<Config> = z.object({
-  artifactRoots: z.array(z.object({
-    id: z.string().required(),
-    path: z.string().required(),
-  })).default([]),
-  artifactBindings: z.array(z.object({
-    id: z.string().required(),
-    rootId: z.string().required(),
-    relativePath: z.string().required(),
-  })).default([]),
   storageDirectory: z.string().default('dog'),
+  workspaceRoot: z.string().default('dog/workspace'),
+  scriptsDirectory: z.string().default('dog/scripts'),
   maxGraphNodes: z.natural().min(1).default(256),
   maxExpressionNodes: z.natural().min(1).default(512),
   maxExpressionDepth: z.natural().min(1).default(64),
-  maxSnapshotBytes: z.natural().min(1).default(67_108_864),
+  maxSandboxBytes: z.natural().min(1).default(67_108_864),
   allowPartialRoot: z.boolean().default(false),
   maxConcurrentVerifications: z.natural().min(1).default(1),
   revalidateThreshold: z.number().default(0.3),
@@ -95,62 +98,154 @@ export const Config: z<Config> = z.object({
 /** Register all DoG tools as Cordis-owned effects so fiber disposal removes them. */
 export async function apply(ctx: Context, config: Config): Promise<void> {
   const schema = await loadSchemaSet()
+  let resolved: Config = config
+  let settingsCurrent: (() => Config) | undefined
+  installSettingsSection(
+    ctx,
+    settingsNamespace('dog'),
+    z.object({
+      storageDirectory: z.string().default('dog'),
+      workspaceRoot: z.string().default('dog/workspace'),
+      scriptsDirectory: z.string().default('dog/scripts'),
+      maxGraphNodes: z.natural().min(1).default(256),
+      maxExpressionNodes: z.natural().min(1).default(512),
+      maxExpressionDepth: z.natural().min(1).default(64),
+      maxSandboxBytes: z.natural().min(1).default(67_108_864),
+      allowPartialRoot: z.boolean().default(false),
+      maxConcurrentVerifications: z.natural().min(1).default(1),
+      revalidateThreshold: z.number().default(0.3),
+      gmDigestAlgo: z.string().default('sha256'),
+      subagentProvider: z.string().default('spawn'),
+      subagentMaxDepth: z.natural().default(3),
+    }),
+    config,
+    {
+      setSource: (current: () => Config) => {
+        settingsCurrent = current
+        resolved = { ...config, ...current() }
+      },
+      onChange: () => undefined,
+    },
+  )
   const repository = new DogRepository(dshHomePath(config.storageDirectory), schema)
-  const engine = new DogEngine({ config, repository, workspaces: new WorkspaceManager() })
-  void engine.reapOrphanRuns().catch(() => undefined)
-  for (const tool of createDogTools(engine)) ctx.effect(() => ctx.tools.register(tool))
+  // Host boot: cancel runs a previous process left `running` (killed/restarted
+  // host) as soon as the plugin loads — before any engine or tool call. Their
+  // settled leaves remain inheritable by the next run of the same graph.
+  void repository.markOrphanedRunningRuns(new Date().toISOString()).catch(() => undefined)
+  const scriptsDir = isAbsolute(config.scriptsDirectory) ? config.scriptsDirectory : dshHomePath(config.scriptsDirectory)
+  const programmatic: ProgrammaticRunner = async (script, inputPath) => {
+    let out: string
+    try {
+      out = execFileSync(resolveScriptPath(scriptsDir, script), [inputPath], {
+        encoding: 'utf8',
+        timeout: 300_000,
+        maxBuffer: 32 * 1024 * 1024,
+      })
+    } catch (error) {
+      return {
+        state: 'inconclusive',
+        evidence: { error: String(error instanceof Error ? error.message : error) },
+        reason: 'script execution failed',
+      }
+    }
+    return parseVerdict(out)
+  }
+  let dogEngine: DogEngine | undefined
+  let agenticRunnerRef: AgenticRunner | undefined
+  const getEngine = (): DogEngine => {
+    if (dogEngine === undefined) {
+      // settingsCurrent re-reads the live scope: the initial registration may
+      // have resolved before the settings file finished loading (async), which
+      // would otherwise freeze schema defaults (e.g. a relative workspaceRoot).
+      const effective = settingsCurrent === undefined ? resolved : { ...config, ...settingsCurrent() }
+      dogEngine = new DogEngine({
+        config: {
+          ...effective,
+          workspaceRoot: isAbsolute(effective.workspaceRoot) ? effective.workspaceRoot : dshHomePath(effective.workspaceRoot),
+          scriptsDirectory: isAbsolute(effective.scriptsDirectory) ? effective.scriptsDirectory : dshHomePath(effective.scriptsDirectory),
+        },
+        programmatic,
+        ...(agenticRunnerRef === undefined ? {} : { agentic: agenticRunnerRef }),
+        repository,
+        workspaces: new WorkspaceManager({ baseDir: effective.workspaceRoot }),
+        resolveLivingAgent: sessionId => {
+          const agents = ctx.get('agents') as AgentRegistry | undefined
+          return agents?.get(sessionId as SessionId)
+        },
+      })
+    }
+    return dogEngine
+  }
+  for (const tool of createDogTools(getEngine, () => ctx.get('jobs') as JobRegistry | undefined)) {
+    ctx.effect(() => ctx.tools.register(tool))
+  }
   ctx.inject(['subagents'], (subagentCtx) => {
-    const subagents = (subagentCtx as unknown as { readonly subagents: HostContinuableSubagents }).subagents
-    const agenticRunner: AgenticVerifierRunner = {
-      async run({ contract, plan, workspace, parent, signal, runId }) {
-        const bytes = await repository.read(plan.snapshot)
-        const inputPath = join(workspace.path, `${plan.artifactId}.bin`)
-        await writeFile(inputPath, bytes)
-        const resultPath = join(workspace.path, 'settlement.json')
-        const rendered = await renderDeckPages(inputPath, workspace.path)
-        if (!rendered.ok && runId !== undefined) {
-          await engine.annotateRun(runId, `page renderer unavailable for ${plan.goalId}: ${rendered.detail}`)
-        }
-        const parentSessionId = readSessionId(parent)
-        const started = await subagents.startContinuable({
-          provider: config.subagentProvider,
-          label: `verifier ${contract.id}@${contract.version}`,
-          request: {
-            prompt: [{ type: 'text', text: buildVerifierPrompt(contract, plan, inputPath, resultPath, rendered.pages) }],
-            parent,
-            maxDepth: config.subagentMaxDepth,
-          },
-          signal,
-        })
-        const sessionId = String(started.childId)
-        if (runId !== undefined && parentSessionId.length > 0) {
-          try {
-            await engine.bindAgent({
+    const subagents: SubagentRuntime = subagentCtx.subagents
+    const agenticRunner: AgenticRunner = async (instruction, workspace, inputPath, env) => {
+      const { parent, runId } = env
+      const signal = env.signal ?? new AbortController().signal
+      const goalId = env.goalId ?? 'verification'
+      const resultPath = join(workspace.path, 'settlement.json')
+      const parentSessionId = readSessionId(parent)
+      if (parent === undefined) {
+        throw new Error('verifier delegation requires a live parent Agent (recovered runs without a live parent cannot spawn verification workers)')
+      }
+      const started = await subagents.startContinuable({
+        provider: config.subagentProvider,
+        label: `verifier ${goalId} · ${runId === undefined ? 'run' : runId.slice(0, 6)}`,
+        request: {
+          prompt: [{ type: 'text', text: buildVerifierPrompt(instruction, inputPath, resultPath) }],
+          parent,
+          maxDepth: config.subagentMaxDepth,
+        },
+        signal,
+      })
+      const sessionId = started.childId
+      if (runId !== undefined) {
+        try {
+          await getEngine().annotateRun(runId, `bind-branch entered for ${goalId}: session ${sessionId.slice(0, 8)}`)
+          const binding = await getEngine().bindAgent(
+            {
               runId,
-              goalId: plan.goalId,
+              goalId,
               role: 'verifier',
               sessionId,
-              parentSessionId,
-            })
-          } catch (bindingError) {
-            await engine.annotateRun(runId, `verifier binding failed for ${plan.goalId}: ${String(bindingError).slice(0, 300)}`)
-            await engine.recordVerifierLifecycle(runId, plan.goalId, 'verifier_bind_failed', sessionId, String(bindingError))
-          }
+              ...(parentSessionId.length > 0 ? { parentSessionId } : {}),
+            },
+            { allowUnrooted: parentSessionId.length === 0 },
+          )
+          await getEngine().annotateRun(
+            runId,
+            `verifier bound for ${goalId}: ${sessionId.slice(0, 8)} (${binding.run.goals[goalId]?.agentSessions?.length ?? 0} bound)`,
+          )
+        } catch (bindingError) {
+          await getEngine().annotateRun(runId, `verifier binding failed for ${goalId}: ${String(bindingError).slice(0, 300)}`)
+          await getEngine().recordVerifierLifecycle(runId, goalId, 'verifier_bind_failed', sessionId, String(bindingError))
         }
-        const settlement = await waitForSettlement(resultPath, signal, 900_000)
-        if (runId !== undefined && parentSessionId.length > 0) {
-          try {
-            subagents.interrupt(sessionId, { kind: 'ancestor', agent: parent })
-            await engine.recordVerifierLifecycle(runId, plan.goalId, 'verifier_released', sessionId)
-          } catch (releaseError) {
-            await engine.annotateRun(runId, `verifier release failed for ${plan.goalId}: ${String(releaseError).slice(0, 300)}`)
-          }
+      }
+      const settlement = await waitForSettlementFlexible(
+        resultPath,
+        signal,
+        300_000,
+        async () => verifierChildTurnEnded(ctx, sessionId),
+      )
+      if (runId !== undefined && parent !== undefined && parentSessionId.length > 0) {
+        try {
+          // Quiet release: interrupting a finished-but-not-yet-released child
+          // emits "Background subagent … was stopped" notifications into the
+          // parent session, which interrupt a parent-turn that is blocked in
+          // dog_wait. drainContinuableChildren releases the Activation/session
+          // handle without that notification storm.
+          await subagents.drainContinuableChildren(parent, [sessionId])
+          await getEngine().recordVerifierLifecycle(runId, goalId, 'verifier_released', sessionId)
+        } catch (releaseError) {
+          await getEngine().annotateRun(runId, `verifier release failed for ${goalId}: ${String(releaseError).slice(0, 300)}`)
         }
-        return { state: settlement.state, observation: settlement.observation }
-      },
+      }
+      return { state: settlement.state, evidence: settlement.observation }
     }
-    engine.setVerifierRegistry(createBuiltinVerifierRegistry({ agenticRunner }))
-    const delegateTool = createDogDelegateAgentTool(engine, {
+    agenticRunnerRef = agenticRunner
+    const delegateTool = createDogDelegateAgentTool(getEngine, {
       async launch(input) {
         const started = await subagents.startContinuable({
           provider: config.subagentProvider,
@@ -162,15 +257,24 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           },
           signal: input.signal,
         })
-        return { sessionId: String(started.childId) }
+        return { sessionId: started.childId }
       },
       interrupt(sessionId, parent) {
-        subagents.interrupt(sessionId, { kind: 'ancestor', agent: parent })
+        subagents.interrupt(sessionId, { kind: 'ancestor', agent: parent } satisfies SubagentInterruptAuthority)
       },
     })
     subagentCtx.effect(() => subagentCtx.tools.register(delegateTool))
   })
   const debugHandler = createDogDebugRpcHandler(repository)
+  // Runtime forensic capture: whenever a session turn is interrupted, snapshot
+  // the on-scene facts (process uptime, recent event sequence, seed boundary)
+  // so the next incident carries its own evidence instead of post-hoc guessing.
+  ctx.on('session/event', (session: Session, event: SessionEvent) => {
+    if (event.type !== 'turn/end') return
+    const reason = (event.data as { readonly reason?: { readonly kind?: string } }).reason
+    if (reason?.kind !== 'interrupted') return
+    void captureInterruptedTurn(repository, session, event as { readonly seq: number; readonly time: number }).catch(() => undefined)
+  })
   ctx.inject(['connection'], (connectionCtx) => {
     connectionCtx.effect(() => connectionCtx.connection.rpc.handle(
       DOG_DEBUG_RPC_CHANNEL,
@@ -180,63 +284,86 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
 }
 
-interface HostContinuableSubagents {
-  startContinuable(spec: {
-    readonly provider: string
-    readonly label: string
-    readonly request: {
-      readonly prompt: { readonly type: 'text'; readonly text: string }[]
-      readonly parent: unknown
-      readonly maxDepth: number
-      readonly toolFilter?: { readonly deny?: readonly string[]; readonly allow?: readonly string[] }
-    }
-    readonly signal: AbortSignal
-  }): Promise<{ readonly childId: unknown }>
-  interrupt(sessionId: string, authority: { readonly kind: 'ancestor'; readonly agent: unknown }): void
+async function captureInterruptedTurn(
+  repository: DogRepository,
+  session: Session,
+  event: { readonly seq: number; readonly time: number },
+): Promise<void> {
+  const diagnosticsDir = join(repository.rootPath, 'diagnostics')
+  await mkdir(diagnosticsDir, { recursive: true })
+  const recentEvents = session.events.slice(-12).map(candidate => ({
+    seq: candidate.seq,
+    type: candidate.type,
+    time: candidate.time,
+  }))
+  const payload = {
+    capturedAt: new Date().toISOString(),
+    process: {
+      pid: process.pid,
+      startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+    },
+    sessionId: session.id,
+    interruptSeq: event.seq,
+    interruptEventTime: new Date(event.time).toISOString(),
+    recentEvents,
+  }
+  await writeFile(
+    join(diagnosticsDir, `interrupt-${session.id.replaceAll(/[^a-zA-Z0-9-]/gu, '_')}-${event.seq}.json`),
+    JSON.stringify(payload, null, 2),
+  )
 }
 
 function buildVerifierPrompt(
-  contract: VerifierContract,
-  plan: AcceptancePlan,
+  instruction: string,
   inputPath: string,
   resultPath: string,
-  renderedPages: readonly string[],
 ): string {
-  const requirement = typeof plan.params.requirement === 'string'
-    ? plan.params.requirement
-    : contract.requirement
-  const target = typeof plan.params.target === 'string' ? plan.params.target : '<whole artifact>'
   return [
-    'You are a DoG verification Agent. Judge ONLY the bound material; you never redefine the task.',
+    'You are a DoG verifier. Judge only the object handed to you.',
     '',
-    `Verification task: ${requirement}`,
-    `Target region: ${target}`,
-    `Artifact file (read-only content): ${inputPath}`,
-    `Allowed tools: ${contract.allowedTools.join(', ') || 'none'}`,
-    'Shell commands are allowed BUT only while the working directory is the artifact workspace; never touch any path outside it',
-    '(especially the host project /Users/fun10165 and other mounts). Write files only inside the workspace directory.',
-    ...(renderedPages.length === 0
-      ? ['WARNING: no page renders are available; inspect the OOXML structure instead.']
-      : [
-        'Page renders (you have vision): use your read tool on each of these PNG files BEFORE judging:',
-        ...renderedPages.map(page => `  - ${page}`),
-      ]),
-    'Your ONLY writable location is the directory containing the artifact file; all other paths are forbidden.',
-    'Do not inspect, list, or read anything outside that directory.',
-    'Produce structured evidence: your observation must state what you actually measured or saw',
-    '(boxes, areas, OCR text, measurements). You cannot claim a pass or fail without evidence.',
-    `Write your settlement to this exact absolute path with your write tool: ${resultPath}`,
-    'It MUST be exactly this top-level shape (nothing else, no evidence dump, no markdown):',
-    '{"settlement": "pass" | "fail" | "inconclusive", "observation": { <your measured evidence here> }}',
-    'After writing the file, stop immediately: no further tool calls, no further inspection. Reply only "verification done".',
-    'If the material cannot be inspected or you cannot decide, report settlement "inconclusive".',
+    `Object (read from here; only this tree is yours): ${inputPath}`,
+    '',
+    'Instruction:',
+    instruction,
+    '',
+    'Decide on your own terms; gather the strongest evidence you can with your own judgment. No fixed evidence format.',
+    `Write your verdict to this exact absolute path: ${resultPath}. The file must contain exactly:`,
+    '{"verdict": "pass" | "fail" | "inconclusive", "evidence": <any JSON>}',
+    'Create it (it does not exist yet); never write it as a relative path or to another location. After writing, stop.',
   ].join('\n')
 }
 
-/** Read the durable session id from a host-provided agent object without trusting an unchecked shape. */
-function readSessionId(parent: unknown): string {
-  if (parent === null || typeof parent !== 'object') return ''
-  if (!('id' in parent)) return ''
-  const id = parent.id
-  return typeof id === 'string' || typeof id === 'number' ? String(id) : ''
+function parseVerdict(out: string): Verdict {
+  let value: unknown
+  try {
+    value = JSON.parse(out)
+  } catch {
+    return { state: 'inconclusive', evidence: { parseError: 'script output was not JSON' }, reason: 'script output was not JSON' }
+  }
+  const record = value as Record<string, unknown>
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+    return { state: 'inconclusive', evidence: { parseError: 'script output was not an object' }, reason: 'script output was not an object' }
+  }
+  const verdict = record.verdict
+  if (verdict !== 'pass' && verdict !== 'fail' && verdict !== 'inconclusive') {
+    return { state: 'inconclusive', evidence: { parseError: 'invalid verdict' }, reason: 'script returned an invalid verdict' }
+  }
+  return {
+    state: verdict,
+    evidence: isJsonValue(record.evidence) ? record.evidence : { outcome: 'no evidence supplied by script' },
+  }
+}
+
+/** Read the durable session id from a live Agent, or '' outside an agent boundary. */
+function readSessionId(parent: Agent | undefined): string {
+  if (parent === undefined) return ''
+  return String(parent.id)
+}
+
+/** True once the verifier child's turn has ended (or the child is gone entirely). */
+function verifierChildTurnEnded(ctx: Context, sessionId: string): boolean {
+  const agents = ctx.get('agents') as AgentRegistry | undefined
+  const agent = agents?.get(sessionId as SessionId)
+  if (agent === undefined) return true
+  return agent.session.events.at(-1)?.type === 'turn/end'
 }

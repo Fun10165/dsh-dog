@@ -694,7 +694,7 @@ function Inspector({ graph, run, nodeId, readGoalRuntime, openSession }: {
   const children = graph.input.contains.filter(edge => edge.parent === nodeId)
   const dependencies = graph.input.dependsOn.filter(edge => edge.source === nodeId || edge.target === nodeId)
   const reason = result.reason ?? (result.verification?.passed === false
-    ? 'Trusted verifier returned false for this immutable artifact snapshot.'
+    ? 'Trusted verifier returned false for this sandboxed input.'
     : undefined)
   return (
     <aside className="dog-inspector" aria-label="Selected goal details">
@@ -917,7 +917,7 @@ function RuntimeContextPanel({ run, goalId, readGoalRuntime, openSession }: Runt
 
 function runtimeActivity(state: GoalState, event: GoalRuntimeEvent | undefined, loading: boolean): string {
   if (event === undefined) return loading ? 'Loading runtime context' : state === 'pending' ? 'Waiting for scheduler' : humanizeState(state)
-  if (event.phase === 'verifier_started' && event.verifier !== undefined) return `Running ${event.verifier.id}@${event.verifier.version}`
+  if (event.phase === 'verifier_started' && event.verifier !== undefined) return `Running ${event.verifier.mode} kernel`
   if (event.phase === 'dependency_blocked') return 'Blocked by an upstream dependency'
   if (event.phase === 'structured_error') return 'Execution needs human review'
   if (event.phase === 'goal_settled') return `Settled as ${humanizeState(event.state ?? state)}`
@@ -935,7 +935,7 @@ function runtimeEventLabel(phase: GoalRuntimeEvent['phase']): string {
     case 'verifier_failed': return 'Verifier failed'
     case 'verifier_inconclusive': return 'Verifier inconclusive'
     case 'composite_evaluated': return 'Completion rule evaluated'
-    case 'result_inherited': return 'Result inherited from prior run'
+    case 'result_inherited': return 'Verification reused: material unchanged'
     case 'verifier_released': return 'Verifier worker released'
     case 'verifier_bind_failed': return 'Verifier worker binding failed'
     case 'structured_error': return 'Runtime error'
@@ -946,7 +946,7 @@ function runtimeEventLabel(phase: GoalRuntimeEvent['phase']): string {
 
 function runtimeEventDetail(event: GoalRuntimeEvent): string | undefined {
   if (event.reason !== undefined) return event.reason
-  if (event.verifier !== undefined) return `${event.verifier.id}@${event.verifier.version} · artifact ${event.verifier.artifactId}`
+  if (event.verifier !== undefined) return `${event.verifier.mode} kernel`
   return undefined
 }
 
@@ -962,21 +962,21 @@ function Evidence({ node, result, plan }: { readonly node: GoalNodeInput; readon
       {plan === undefined ? <div className="dog-reason dog-state-needs_human">No compiled acceptance plan is available.</div> : (
         <div className="dog-evidence">
           <div className="dog-evidence-head">
-            <span className="dog-evidence-name">{plan.verifierId}@{plan.verifierVersion}</span>
+            <span className="dog-evidence-name">{plan.verifier.mode === 'programmatic' ? `script:${plan.verifier.script}` : 'agentic'}</span>
             {result.verification === undefined ? <span className="dog-mini-chip">not run</span> : <StatusChip state={result.verification.passed ? 'success' : 'failure'} />}
           </div>
           <div className="dog-evidence-body">
             <dl className="dog-definition">
-              <dt>Artifact</dt><dd className="dog-mono">{plan.artifactId}</dd>
-              <dt>Snapshot</dt><dd className="dog-mono" title={plan.snapshot.snapshotId}>{shortId(plan.snapshot.snapshotId)}</dd>
-              <dt>Bytes</dt><dd>{plan.snapshot.byteLength.toLocaleString()}</dd>
-              <dt>Schema</dt><dd className="dog-mono">{plan.evidenceSchemaId}</dd>
+              <dt>Sandbox file</dt><dd className="dog-mono">{(typeof plan.input?.path === 'string' && plan.input.path.length > 0) ? plan.input.path : '(run workspace)'}</dd>
+              <dt>Digest</dt><dd className="dog-mono" title={plan.input?.digest}>{plan.input === undefined ? '—' : shortId(plan.input.digest)}</dd>
+              <dt>Bytes</dt><dd>{plan.input === undefined ? '—' : plan.input.byteLength.toLocaleString()}</dd>
+              <dt>Target</dt><dd className="dog-mono">{plan.target}</dd>
             </dl>
             {result.verification === undefined ? null : (
               <div className="dog-inspector-section">
-                <h5 className="dog-inspector-section-title">Observation</h5>
+                <h5 className="dog-inspector-section-title">Evidence</h5>
                 <div className="dog-observation">
-                  {Object.entries(result.verification.observation).map(([key, value]) => (
+                  {Object.entries(result.verification.evidence as unknown as Record<string, JsonValue> ?? {}).map(([key, value]) => (
                     <div className="dog-observation-row" key={key}>
                       <span className="dog-observation-key">{key}</span>
                       <span className="dog-observation-value">{formatJson(value)}</span>
@@ -1007,7 +1007,10 @@ function EmptyWorkspace({ loading, error }: { readonly loading: boolean; readonl
 }
 
 function StatusChip({ state }: { readonly state: GoalState | RootTerminalState | DogRun['state'] }): JSX.Element {
-  return <span className={`dog-status-chip ${stateClass(state)}`}>{humanizeState(state)}</span>
+  const title = state === 'inherited'
+    ? 'Reused the prior run verification record: same material digest (GM) and same verifier contract. Not re-run.'
+    : undefined
+  return <span className={`dog-status-chip ${stateClass(state)}`} title={title}>{humanizeState(state)}</span>
 }
 
 function IconButton({ label, busy, onClick, children }: { readonly label: string; readonly busy: boolean; readonly onClick: () => void; readonly children: ReactNode }): JSX.Element {

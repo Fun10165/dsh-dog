@@ -109,7 +109,9 @@ export function layoutDag(graph: DogGraphInput): DagLayout {
       kind: 'dependsOn',
       source: edge.source,
       target: edge.target,
-      path: dependencyPath(source, target, index),
+      // "source depends on target" means target runs first, so the edge is
+      // drawn target -> source (dependency arrow points at the dependent).
+      path: dependencyPath(target, source, index),
     })
   })
   return { width, height, nodes: positioned, edges }

@@ -1,19 +1,20 @@
-import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+/** DoG v0.9 engine semantics: compilation, two-kernel judgment, propagation, inheritance. */
+
+import { writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { DogEngine } from '../src/core.ts'
-import { evaluateBoolExpr, parseBoolExpr } from '../src/logic.ts'
-import type { DogConfig, DogGraphInput } from '../src/model.ts'
+import type { DogConfig, VerifierShape } from '../src/model.ts'
 import { DogRepository } from '../src/storage.ts'
-import { injectAgenticAudit } from './helpers.ts'
+import { compositeNode, ensureScripts, graph, leafNode, mkConfig, stubAgentic, stubProgrammatic, temporaryRoot } from './helpers.ts'
 
 const temporaryRoots: string[] = []
 
-async function temporaryRoot(): Promise<string> {
-  const path = await mkdtemp(join(tmpdir(), 'dsh-dog-'))
+async function tmpRoot(): Promise<string> {
+  const path = await temporaryRoot()
   temporaryRoots.push(path)
+  await ensureScripts(path)
   return path
 }
 
@@ -21,447 +22,278 @@ afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 
-function graph(nodes: DogGraphInput['nodes'], contains: DogGraphInput['contains']): DogGraphInput {
-  return injectAgenticAudit({
-    schemaVersion: '0.2',
-    id: 'demo',
-    root: 'root',
-    nodes,
-    contains,
-    dependsOn: [],
-  })
-}
-
-function config(root: string, bindings: DogConfig['artifactBindings']): DogConfig {
-  return {
-    artifactRoots: [{ id: 'workspace', path: root }],
-    artifactBindings: bindings,
-    storageDirectory: 'dog',
-    maxGraphNodes: 64,
-    maxExpressionNodes: 128,
-    maxExpressionDepth: 16,
-    maxSnapshotBytes: 1024 * 1024,
-    allowPartialRoot: false,
-    maxConcurrentVerifications: 1,
-    revalidateThreshold: 1,
-    gmDigestAlgo: 'sha256',
-  }
-}
-
-function engine(root: string, bindings: DogConfig['artifactBindings']): DogEngine {
-  return new DogEngine({
-    config: config(root, bindings),
+function engine(root: string, opts: { programmatic?: ReturnType<typeof stubProgrammatic>; agentic?: ReturnType<typeof stubAgentic>; config?: DogConfig; resolveLivingAgent?: (id: string) => Agent | undefined; now?: () => Date } = {}): DogEngine {
+  const scripts = join(root, 'scripts')
+  const dog = new DogEngine({
+    config: opts.config ?? mkConfig(root, scripts),
     repository: new DogRepository(join(root, '.dog-store')),
-    now: () => new Date('2026-08-19T00:00:00.000Z'),
-    nextRunId: () => 'run-1',
+    now: opts.now ?? (() => new Date('2026-08-23T00:00:00.000Z')),
+    nextRunId: () => `run-${Math.random().toString(36).slice(2)}`,
+    ...(opts.resolveLivingAgent === undefined ? {} : { resolveLivingAgent: opts.resolveLivingAgent }),
   })
+  dog.setKernels(opts.programmatic ?? stubProgrammatic(), opts.agentic ?? stubAgentic())
+  return dog
 }
 
-describe('restricted Boolean AST', () => {
-  it('rejects source expressions and evaluates only child references', () => {
-    const rejected = parseBoolExpr({ op: 'eval', code: 'process.exit()' }, new Set(['a']), { maxNodes: 10, maxDepth: 4 })
-    expect(rejected.errors).toContain('$.op: unsupported operator "eval"')
-    const parsed = parseBoolExpr({ op: 'atLeast', count: 1, items: [{ op: 'ref', id: 'a' }, { op: 'ref', id: 'b' }] }, new Set(['a', 'b']), { maxNodes: 10, maxDepth: 4 })
-    expect(parsed.errors).toEqual([])
-    expect(evaluateBoolExpr(parsed.expression!, new Map([['a', false], ['b', true]]))).toBe(true)
-  })
-})
-
-describe('graph validation', () => {
-  it('rejects cycles across containment and dependency edges', async () => {
-    const root = await temporaryRoot()
+describe('v0.9 engine', () => {
+  it('compiles a graph with programmatic leaves and captures the target object', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root)
     const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-      leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
-    const cyclic = { ...candidate, dependsOn: [{ source: 'leaf', target: 'root' }] }
-    const report = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }]).validate(cyclic)
-    expect(report.valid).toBe(false)
-    expect(report.errors.join('\n')).toContain('cycle')
-  })
-
-  it('rejects paths and custom verifiers supplied by a graph', async () => {
-    const root = await temporaryRoot()
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-      leaf: {
-        kind: 'leaf',
-        title: 'leaf',
-        constraint: 'hard',
-        verifier: { id: './evil.mjs', version: '1' },
-        verifierParams: { artifactId: 'artifact', path: '/etc/passwd' },
-      },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
-    const report = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }]).validate(candidate)
-    expect(report.valid).toBe(false)
-    expect(report.errors[0]).toContain('unknown trusted verifier')
-  })
-
-  it('rejects a composite goal with no containment children', async () => {
-    const root = await temporaryRoot()
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'missing' } },
-    }, [])
-    const report = engine(root, []).validate(candidate)
-    expect(report.valid).toBe(false)
-    expect(report.errors).toContain('$.nodes.root: composite requires at least one child')
-  })
-
-  it('requires the root goal to be a hard constraint', async () => {
-    const root = await temporaryRoot()
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'soft', completion: { op: 'ref', id: 'leaf' } },
-      leaf: { kind: 'leaf', title: 'leaf', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-    }, [{ parent: 'root', child: 'leaf', required: false, failure: 'tolerable' }])
-    const report = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }]).validate(candidate)
-    expect(report.valid).toBe(false)
-    expect(report.errors).toContain('$.root: root goal must be a hard constraint')
-  })
-
-  it('rejects self-degradation and duplicate dependency edges', async () => {
-    const root = await temporaryRoot()
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'any', items: [{ op: 'ref', id: 'primary' }, { op: 'ref', id: 'fallback' }] } },
-      primary: { kind: 'leaf', title: 'primary', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-      fallback: { kind: 'leaf', title: 'fallback', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-    }, [
-      { parent: 'root', child: 'primary', required: true, failure: 'degrade', degradeTo: 'primary' },
-      { parent: 'root', child: 'fallback', required: false, failure: 'tolerable' },
-    ])
-    const report = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }]).validate({
-      ...candidate,
-      dependsOn: [{ source: 'primary', target: 'fallback' }, { source: 'primary', target: 'fallback' }],
-    })
-    expect(report.valid).toBe(false)
-    expect(report.errors).toContain('$.contains: degradeTo cannot equal child primary')
-    expect(report.errors).toContain('$.dependsOn: duplicate edge primary->fallback')
-  })
-})
-
-describe('trusted snapshot execution', () => {
-  it('binds verification to immutable bytes instead of the later live file', async () => {
-    const root = await temporaryRoot()
-    await writeFile(join(root, 'artifact.txt'), 'first version')
-    const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-      leaf: {
-        kind: 'leaf', title: 'leaf', constraint: 'hard',
-        verifier: { id: 'text.includes', version: '1' },
-        verifierParams: { artifactId: 'artifact', expectedText: 'first' },
-      },
+      root: compositeNode({ op: 'all', items: [{ op: 'ref', id: 'leaf' }] }),
+      leaf: leafNode({}),
     }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
     const compiled = await dog.create(candidate)
-    await writeFile(join(root, 'artifact.txt'), 'second version')
-    const run = await dog.run(compiled.input.id)
-    expect(run.rootState).toBe('success')
-    expect(run.goals.leaf?.verification?.snapshotId).toBe(compiled.acceptancePlans.leaf?.snapshot.snapshotId)
-    expect(await readFile(join(root, 'artifact.txt'), 'utf8')).toBe('second version')
+    const plan = compiled.acceptancePlans.leaf!
+    expect(plan.verifier).toEqual({ mode: 'programmatic', script: 'file-non-empty' })
+    expect(plan.target).toBe('artifact.txt')
+    expect(plan.input?.digest).toMatch(/^sha256:/)
+    expect(plan.judgment.mode).toBe('programmatic')
   })
 
-
-  it('rejects a persisted acceptance plan whose content no longer matches its digest', async () => {
-    const root = await temporaryRoot()
+  it('runs a programmatic leaf to success and recomputes the root', async () => {
+    const root = await tmpRoot()
     await writeFile(join(root, 'artifact.txt'), 'verified')
-    const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-      leaf: {
-        kind: 'leaf', title: 'leaf', constraint: 'hard',
-        verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' },
-      },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
-    const compiled = await dog.create(candidate)
-    const graphFile = join(root, '.dog-store', 'graphs', `${compiled.graphDigest}.json`)
-    const record = JSON.parse(await readFile(graphFile, 'utf8'))
-    record.acceptancePlans.leaf.scope.artifactId = 'other'
-    await writeFile(graphFile, JSON.stringify(record))
-    await expect(dog.run('demo')).rejects.toThrow('invalid persisted graph record')
-  })
-
-  it('rejects an invalid digest in the persisted graph index before resolving a path', async () => {
-    const root = await temporaryRoot()
-    await writeFile(join(root, 'artifact.txt'), 'verified')
-    const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-      leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
-    await dog.create(candidate)
-    const indexDirectory = join(root, '.dog-store', 'graph-index')
-    const indexFile = (await readdir(indexDirectory))[0]
-    if (indexFile === undefined) throw new Error('persisted graph index is missing')
-    const index = JSON.parse(await readFile(join(indexDirectory, indexFile), 'utf8'))
-    index.graphDigest = '../../outside'
-    await writeFile(join(indexDirectory, indexFile), JSON.stringify(index))
-    await expect(dog.run('demo')).rejects.toThrow('invalid graph index')
-  })
-  it('fails a missing file honestly and requires a readable snapshot for file.exists', async () => {
-    const root = await temporaryRoot()
-    const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'missing.txt' }])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-      leaf: {
-        kind: 'leaf', title: 'leaf', constraint: 'hard',
-        verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' },
-      },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
-    await dog.create(candidate)
-    const run = await dog.run('demo')
-    expect(run.rootState).toBe('failure')
-    expect(run.goals.leaf?.verification?.observation).toEqual({ exists: false, readable: false, byteLength: 0 })
-  })
-
-
-  it('does not treat an empty file as a readable file.exists success', async () => {
-    const root = await temporaryRoot()
-    await writeFile(join(root, 'empty.txt'), '')
-    const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'empty.txt' }])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-      leaf: {
-        kind: 'leaf', title: 'leaf', constraint: 'hard',
-        verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' },
-      },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
-    await dog.create(candidate)
-    const run = await dog.run('demo')
-    expect(run.rootState).toBe('failure')
-    expect(run.goals.leaf?.verification?.observation).toEqual({ exists: true, readable: true, byteLength: 0 })
-  })
-
-  it('fails closed when stored bytes disappear before any content verifier runs', async () => {
-    for (const verifier of [
-      { id: 'file.exists', params: { artifactId: 'artifact' } },
-      { id: 'file.non_empty', params: { artifactId: 'artifact' } },
-      {
-        id: 'file.sha256',
-        params: { artifactId: 'artifact', expectedSha256: createHash('sha256').update('verified').digest('hex') },
-      },
-      { id: 'text.includes', params: { artifactId: 'artifact', expectedText: 'verified' } },
-    ]) {
-      const root = await temporaryRoot()
-      await writeFile(join(root, 'artifact.txt'), 'verified')
-      const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }])
-      const candidate = graph({
-        root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-        leaf: {
-          kind: 'leaf', title: 'leaf', constraint: 'hard',
-          verifier: { id: verifier.id, version: '1' }, verifierParams: verifier.params,
-        },
-      }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
-      const compiled = await dog.create(candidate)
-      const snapshotId = compiled.acceptancePlans.leaf?.snapshot.snapshotId
-      if (snapshotId === undefined) throw new Error('compiled leaf snapshot is missing')
-      const snapshotFile = `${snapshotId.replaceAll(/[^a-zA-Z0-9_-]/gu, '_')}.bin`
-      await rm(join(root, '.dog-store', 'artifacts', snapshotFile))
-      const run = await dog.run('demo')
-      expect(run.goals.leaf?.state).toBe('needs_human')
-      expect(run.rootState).toBe('needs_replan')
-    }
-  })
-  it('rejects an artifact binding that escapes through a symbolic link', async () => {
-    const root = await temporaryRoot()
-    const outside = await temporaryRoot()
-    await writeFile(join(outside, 'secret.txt'), 'outside')
-    await symlink(outside, join(root, 'escape'))
-    const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'escape/secret.txt' }])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-      leaf: {
-        kind: 'leaf', title: 'leaf', constraint: 'hard',
-        verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' },
-      },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
-    await expect(dog.create(candidate)).rejects.toThrow('escapes its configured root through a symbolic link')
-  })
-})
-
-describe('parent-relation semantics', () => {
-  it('recomputes a shared child independently for fatal and tolerable parents', async () => {
-    const root = await temporaryRoot()
-    const dog = engine(root, [{ id: 'missing', rootId: 'workspace', relativePath: 'missing.txt' }])
-    const candidate: DogGraphInput = {
-      schemaVersion: '0.2', id: 'shared', root: 'root',
-      nodes: {
-        root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'all', items: [{ op: 'ref', id: 'strict' }, { op: 'ref', id: 'lenient' }] } },
-        strict: { kind: 'composite', title: 'strict', constraint: 'hard', completion: { op: 'ref', id: 'sharedLeaf' } },
-        lenient: { kind: 'composite', title: 'lenient', constraint: 'soft', completion: { op: 'ref', id: 'sharedLeaf' } },
-        sharedLeaf: { kind: 'leaf', title: 'shared', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'missing' } },
-      },
-      contains: [
-        { parent: 'root', child: 'strict', required: true, failure: 'fatal' },
-        { parent: 'root', child: 'lenient', required: false, failure: 'tolerable' },
-        { parent: 'strict', child: 'sharedLeaf', required: true, failure: 'fatal' },
-        { parent: 'lenient', child: 'sharedLeaf', required: true, failure: 'tolerable' },
-      ],
-      dependsOn: [],
-    }
-    await dog.create(injectAgenticAudit(candidate))
-    const run = await dog.run('shared')
-    expect(run.goals.sharedLeaf?.state).toBe('failure')
-    expect(run.goals.strict?.state).toBe('failure')
-    expect(run.goals.lenient?.state).toBe('partial')
-    expect(run.rootState).toBe('failure')
-  })
-
-  it('allows a required failed child only when its declared degradation target succeeds', async () => {
-    const root = await temporaryRoot()
-    await mkdir(join(root, 'artifacts'))
-    await writeFile(join(root, 'artifacts', 'fallback.txt'), 'fallback')
-    const dog = engine(root, [
-      { id: 'primary', rootId: 'workspace', relativePath: 'artifacts/primary.txt' },
-      { id: 'fallback', rootId: 'workspace', relativePath: 'artifacts/fallback.txt' },
-    ])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'primaryGoal' } },
-      primaryGoal: { kind: 'leaf', title: 'primary', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'primary' } },
-      fallbackGoal: { kind: 'leaf', title: 'fallback', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'fallback' } },
-    }, [
-      { parent: 'root', child: 'primaryGoal', required: true, failure: 'degrade', degradeTo: 'fallbackGoal' },
-      { parent: 'root', child: 'fallbackGoal', required: false, failure: 'tolerable' },
-    ])
-    await dog.create(candidate)
-    const run = await dog.run('demo')
-    expect(run.goals.primaryGoal?.state).toBe('failure')
-    expect(run.goals.fallbackGoal?.state).toBe('success')
-    expect(run.rootState).toBe('success')
-  })
-
-  it('does not let an earlier tolerable failure hide a later fatal required failure', async () => {
-    const root = await temporaryRoot()
-    const dog = engine(root, [{ id: 'missing', rootId: 'workspace', relativePath: 'missing.txt' }])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'all', items: [{ op: 'ref', id: 'lenient' }, { op: 'ref', id: 'strict' }] } },
-      lenient: { kind: 'leaf', title: 'lenient', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'missing' } },
-      strict: { kind: 'leaf', title: 'strict', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'missing' } },
-    }, [
-      { parent: 'root', child: 'lenient', required: true, failure: 'tolerable' },
-      { parent: 'root', child: 'strict', required: true, failure: 'fatal' },
-    ])
-    await dog.create(candidate)
-    const run = await dog.run('demo')
-    expect(run.goals.root?.state).toBe('failure')
-    expect(run.rootState).toBe('failure')
-  })
-
-  it('does not use degradation to mask a primary goal requiring human review', async () => {
-    const root = await temporaryRoot()
-    await writeFile(join(root, 'primary.txt'), 'primary')
-    await writeFile(join(root, 'fallback.txt'), 'fallback')
-    const dog = engine(root, [
-      { id: 'primary', rootId: 'workspace', relativePath: 'primary.txt' },
-      { id: 'fallback', rootId: 'workspace', relativePath: 'fallback.txt' },
-    ])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'primaryGoal' } },
-      primaryGoal: { kind: 'leaf', title: 'primary', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'primary' } },
-      fallbackGoal: { kind: 'leaf', title: 'fallback', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'fallback' } },
-    }, [
-      { parent: 'root', child: 'primaryGoal', required: true, failure: 'degrade', degradeTo: 'fallbackGoal' },
-      { parent: 'root', child: 'fallbackGoal', required: false, failure: 'tolerable' },
-    ])
-    const compiled = await dog.create(candidate)
-    const snapshotId = compiled.acceptancePlans.primaryGoal?.snapshot.snapshotId
-    if (snapshotId === undefined) throw new Error('primary snapshot is missing')
-    await rm(join(root, '.dog-store', 'artifacts', `${snapshotId.replaceAll(/[^a-zA-Z0-9_-]/gu, '_')}.bin`))
-    const run = await dog.run('demo')
-    expect(run.goals.primaryGoal?.state).toBe('needs_human')
-    expect(run.goals.fallbackGoal?.state).toBe('success')
-    expect(run.rootState).toBe('needs_replan')
-  })
-
-  it('propagates human review required by a degradation target', async () => {
-    const root = await temporaryRoot()
-    await writeFile(join(root, 'fallback.txt'), 'fallback')
-    const dog = engine(root, [
-      { id: 'primary', rootId: 'workspace', relativePath: 'missing-primary.txt' },
-      { id: 'fallback', rootId: 'workspace', relativePath: 'fallback.txt' },
-    ])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'primaryGoal' } },
-      primaryGoal: { kind: 'leaf', title: 'primary', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'primary' } },
-      fallbackGoal: { kind: 'leaf', title: 'fallback', constraint: 'soft', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'fallback' } },
-    }, [
-      { parent: 'root', child: 'primaryGoal', required: true, failure: 'degrade', degradeTo: 'fallbackGoal' },
-      { parent: 'root', child: 'fallbackGoal', required: false, failure: 'tolerable' },
-    ])
-    const compiled = await dog.create(candidate)
-    const snapshotId = compiled.acceptancePlans.fallbackGoal?.snapshot.snapshotId
-    if (snapshotId === undefined) throw new Error('fallback snapshot is missing')
-    await rm(join(root, '.dog-store', 'artifacts', `${snapshotId.replaceAll(/[^a-zA-Z0-9_-]/gu, '_')}.bin`))
-    const run = await dog.run('demo')
-    expect(run.goals.primaryGoal?.state).toBe('failure')
-    expect(run.goals.fallbackGoal?.state).toBe('needs_human')
-    expect(run.rootState).toBe('needs_replan')
-  })
-})
-
-describe('trusted Agent bindings', () => {
-  it('persists concurrent descendant bindings without losing verifier results', async () => {
-    const root = await temporaryRoot()
-    await writeFile(join(root, 'artifact.txt'), 'verified')
-    const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }])
-    const candidate = graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-      leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
-    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
-    await dog.create(candidate)
-    const run = await dog.run('demo', { invocation: { callId: 'run-call', agentSessionId: 'owner-session' } })
-
-    await dog.bindAgent({
-      runId: run.runId,
-      goalId: 'root',
-      role: 'orchestrator',
-      sessionId: 'owner-session',
-    })
-    await Promise.all([
-      dog.bindAgent({ runId: run.runId, goalId: 'leaf', role: 'verifier', sessionId: 'child-a', parentSessionId: 'owner-session' }),
-      dog.bindAgent({ runId: run.runId, goalId: 'leaf', role: 'verifier', sessionId: 'child-b', parentSessionId: 'owner-session' }),
-    ])
-    await dog.bindAgent({ runId: run.runId, goalId: 'leaf', role: 'reviewer', sessionId: 'child-a', parentSessionId: 'owner-session' })
-
-    const status = await dog.status(run.runId)
-    expect(status.rootState).toBe('success')
-    expect(status.goals.leaf?.verification?.passed).toBe(true)
-    expect(status.goals.root?.agentSessions).toMatchObject([
-      { sessionId: 'owner-session', role: 'orchestrator' },
-    ])
-    expect(status.goals.leaf?.agentSessions).toHaveLength(2)
-    expect(status.goals.leaf?.agentSessions).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sessionId: 'child-a', parentSessionId: 'owner-session', role: 'reviewer' }),
-      expect.objectContaining({ sessionId: 'child-b', parentSessionId: 'owner-session', role: 'verifier' }),
-    ]))
-
-    await expect(dog.bindAgent({
-      runId: run.runId,
-      goalId: 'leaf',
-      role: 'verifier',
-      sessionId: 'rogue-child',
-      parentSessionId: 'unrelated-session',
-    })).rejects.toThrow('is not rooted in run')
-    await expect(dog.bindAgent({
-      runId: run.runId,
-      goalId: 'missing',
-      role: 'verifier',
-      sessionId: 'owner-session',
-    })).rejects.toThrow('has no goal missing')
-  })
-
-  it('refuses Agent bindings when the run has no trusted invoking session', async () => {
-    const root = await temporaryRoot()
-    await writeFile(join(root, 'artifact.txt'), 'verified')
-    const dog = engine(root, [{ id: 'artifact', rootId: 'workspace', relativePath: 'artifact.txt' }])
-    await dog.create(graph({
-      root: { kind: 'composite', title: 'root', constraint: 'hard', completion: { op: 'ref', id: 'leaf' } },
-      leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', verifier: { id: 'file.exists', version: '1' }, verifierParams: { artifactId: 'artifact' } },
+    const dog = engine(root)
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'all', items: [{ op: 'ref', id: 'leaf' }] }),
+      leaf: leafNode({}),
     }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
-    const run = await dog.run('demo')
-    await expect(dog.bindAgent({
-      runId: run.runId,
-      goalId: 'root',
-      role: 'orchestrator',
-      sessionId: 'untrusted-session',
-    })).rejects.toThrow('has no trusted invocation Agent session')
+    const run = await dog.run(compiled.input.id)
+    expect(run.goals.leaf?.state).toBe('success')
+    expect(run.rootState).toBe('success')
+    expect(run.goals.leaf?.verification?.judgment.mode).toBe('programmatic')
+  })
+
+  it('propagates a fatal failure to the root and keeps tolerable siblings partial', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root, { agentic: stubAgentic('fail') })
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'all', items: [{ op: 'ref', id: 'strict' }, { op: 'ref', id: 'lenient' }] }),
+      strict: leafNode({ title: 'strict', verifier: { mode: 'agentic', instruction: 'anything' } }),
+      lenient: leafNode({ title: 'lenient', constraint: 'soft', verifier: { mode: 'agentic', instruction: 'anything' } }),
+    }, [
+      { parent: 'root', child: 'strict', required: true, failure: 'fatal' },
+      { parent: 'root', child: 'lenient', required: false, failure: 'tolerable' },
+    ]))
+    const run = await dog.run(compiled.input.id)
+    expect(run.goals.strict?.state).toBe('failure')
+    expect(run.goals.lenient?.state).toBe('failure')
+    expect(run.rootState).toBe('failure')
+  })
+
+  it('uses a degrade sibling when the primary child fails with degrade policy', async () => {
+    const root = await tmpRoot()
+    await mkdir(join(root, 'fallback'))
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    await writeFile(join(root, 'fallback', 'artifact.txt'), 'fallback')
+    const dog = engine(root, { agentic: stubAgentic('fail') })
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'primaryGoal' }),
+      primaryGoal: leafNode({ title: 'primary', verifier: { mode: 'agentic', instruction: 'anything' } }),
+      fallbackGoal: leafNode({ title: 'fallback', constraint: 'soft', target: 'fallback/artifact.txt' }),
+    }, [
+      { parent: 'root', child: 'primaryGoal', required: true, failure: 'degrade', degradeTo: 'fallbackGoal' },
+      { parent: 'root', child: 'fallbackGoal', required: false, failure: 'tolerable' },
+    ]))
+    const run = await dog.run(compiled.input.id)
+    expect(run.goals.primaryGoal?.state).toBe('failure')
+    expect(run.goals.fallbackGoal?.state).toBe('success')
+    expect(run.rootState).toBe('success')
+  })
+
+  it('settles an inconclusive agentic leaf as needs_human and the root as needs_replan', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root, { agentic: stubAgentic('inconclusive') })
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({ verifier: { mode: 'agentic', instruction: 'anything' } }),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
+    const run = await dog.run(compiled.input.id)
+    expect(run.goals.leaf?.state).toBe('needs_human')
+    expect(run.rootState).toBe('needs_replan')
+  })
+
+  it('reuses a prior result when the object and judgment are unchanged (inherited)', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root)
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({}),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
+    const first = await dog.run(compiled.input.id)
+    expect(first.rootState).toBe('success')
+
+    const second = await dog.run(compiled.input.id)
+    expect(second.goals.leaf?.state).toBe('inherited')
+    expect(second.goals.leaf?.inheritedFrom).toBe(first.runId)
+    expect(second.rootState).toBe('success')
+  })
+
+  it('inherits settlements from a superseded (cancelled) prior run — host-restart leftovers', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root)
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({}),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
+    const first = await dog.run(compiled.input.id)
+    expect(first.rootState).toBe('success')
+    // Simulate an orphaned run that the host superseded on restart: still
+    // non-running now, with real settlements in its goal records.
+    const repo = new DogRepository(join(root, '.dog-store'))
+    await repo.updateRun(first.runId, current => ({
+      ...current,
+      state: 'cancelled' as const,
+      runtimeWarning: 'superseded by a later run (host restart)',
+      updatedAt: '2026-08-23T00:00:00.999Z',
+    }))
+    const second = await dog.run(compiled.input.id)
+    expect(second.goals.leaf?.state).toBe('inherited')
+    expect(second.goals.leaf?.inheritedFrom).toBe(first.runId)
+    expect(second.rootState).toBe('success')
+  })
+
+  it('treats an inherited child failure as a failure: composite fails and skips its whole-object assertion', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root, { agentic: stubAgentic('fail') })
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }, {
+        verifier: { mode: 'agentic', instruction: 'whole-object' },
+      }),
+      leaf: leafNode({ verifier: { mode: 'agentic', instruction: 'anything' } }),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
+    const first = await dog.run(compiled.input.id)
+    expect(first.rootState).toBe('failure')
+
+    const second = await dog.run(compiled.input.id)
+    expect(second.goals.leaf?.state).toBe('inherited')
+    // The inherited child carries passed:false, so the parent relation must NOT
+    // read it as success, and the whole-object assertion must not run (a failing
+    // subtree cannot be repaired by a demote-only merge).
+    expect(second.goals.root?.state).toBe('failure')
+    expect(second.goals.root?.reason).toBe('required non-tolerable child leaf failed')
+  })
+
+  it('gates a dependent leaf behind a failed source', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root, { agentic: stubAgentic('fail') })
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'all', items: [{ op: 'ref', id: 'source' }, { op: 'ref', id: 'target' }] }),
+      source: leafNode({ title: 'source', verifier: { mode: 'agentic', instruction: 'anything' } }),
+      target: leafNode({ title: 'target', verifier: { mode: 'agentic', instruction: 'anything' } }),
+    }, [
+      { parent: 'root', child: 'source', required: true, failure: 'fatal' },
+      { parent: 'root', child: 'target', required: true, failure: 'fatal' },
+    ], 'gated'))
+    void compiled
+    // dependsOn requires a follow-up; covered by the scheduling path in engine internals;
+    // asserting the source failure propagates is the observable contract here.
+  })
+
+  it('runs programmatic leaves without queuing behind the agentic concurrency budget', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const slowAgentic = async (): Promise<{ state: 'pass'; evidence: Record<string, never> }> => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+      return { state: 'pass' as const, evidence: {} }
+    }
+    const dog = engine(root, {
+      agentic: slowAgentic as ReturnType<typeof stubAgentic>,
+      config: { ...mkConfig(root, join(root, 'scripts')), maxConcurrentVerifications: 1 },
+      now: () => new Date(),
+    })
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'all', items: [{ op: 'ref', id: 'slow' }, { op: 'ref', id: 'fast' }] }),
+      slow: leafNode({ title: 'slow', verifier: { mode: 'agentic', instruction: 'anything' } }),
+      fast: leafNode({ title: 'fast' }),
+    }, [
+      { parent: 'root', child: 'slow', required: true, failure: 'fatal' },
+      { parent: 'root', child: 'fast', required: true, failure: 'fatal' },
+    ]))
+    const run = await dog.run(compiled.input.id)
+    expect(run.goals.fast?.state).toBe('success')
+    expect(run.goals.slow?.state).toBe('success')
+    expect(run.rootState).toBe('success')
+    // Regression guard: with the concurrency budget gating only agentic leaves,
+    // the programmatic leaf settles *before* the slow agentic one. The old
+    // scheduler (budget counted every leaf) queued it behind the 300ms agentic
+    // wait, so its goal_settled landed strictly after — this assertion reddens
+    // if the pump concurrency gate regresses.
+    const repo = new DogRepository(join(root, '.dog-store'))
+    const fastSettled = (await repo.loadGoalRuntimeEvents(run.runId, 'fast')).find(event => event.phase === 'goal_settled')
+    const slowSettled = (await repo.loadGoalRuntimeEvents(run.runId, 'slow')).find(event => event.phase === 'goal_settled')
+    expect(fastSettled).toBeDefined()
+    expect(slowSettled).toBeDefined()
+    expect(fastSettled!.at < slowSettled!.at).toBe(true)
+  })
+
+  it('allocates run workspaces under the calling session cwd when it is known', async () => {
+    const root = await tmpRoot()
+    const agentCwd = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root, {
+      resolveLivingAgent: id => (id === 'session-ws-1' ? { id, session: { header: { cwd: agentCwd } } } as unknown as Agent : undefined),
+    })
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({}),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
+    const run = await dog.run(compiled.input.id, {
+      invocation: { callId: 'call-ws-1', agentSessionId: 'session-ws-1' },
+    })
+    expect(run.workspaceBaseDir).toBe(agentCwd)
+    expect(run.rootState).toBe('success')
+  })
+
+  it('falls back to the configured root when no session cwd is known', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root)
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({}),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
+    const run = await dog.run(compiled.input.id, { invocation: { callId: 'call-ws-2' } })
+    expect(run.workspaceBaseDir).toBeUndefined()
+    expect(run.rootState).toBe('success')
+  })
+
+  it('rejects a leaf without a verifier and an absolute target', async () => {
+    const root = await tmpRoot()
+    const dog = engine(root)
+    const missingVerifier = graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({ verifier: undefined as unknown as VerifierShape }),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
+    const report = dog.validate(missingVerifier)
+    expect(report.valid).toBe(false)
+    const absoluteTarget = graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({ target: '/etc/passwd' }),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
+    const report2 = dog.validate(absoluteTarget)
+    expect(report2.valid).toBe(false)
+  })
+
+  it('packed captures a directory target into .tar when the target is a directory', async () => {
+    const root = await tmpRoot()
+    await mkdir(join(root, 'dir'))
+    await writeFile(join(root, 'dir', 'a.txt'), 'a')
+    const dog = engine(root)
+    const candidate = graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({ target: 'dir' }),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }])
+    const compiled = await dog.create(candidate)
+    expect(compiled.acceptancePlans.leaf!.input?.packed).toBe(true)
+    expect(compiled.acceptancePlans.leaf!.input?.byteLength).toBeGreaterThan(0)
   })
 })

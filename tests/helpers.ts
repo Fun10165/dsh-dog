@@ -1,40 +1,89 @@
-/** Shared test helpers: make v0.1-era fixtures legal under the §4 agentic rule. */
+/** Test fixtures for DoG v0.9: graph builders and kernel stubs. */
 
-import type { DogGraphInput } from '../src/model.ts'
+import { mkdtemp, mkdir, writeFile, chmod } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { DogConfig, DogGraphInput, GoalNodeInput, VerifierShape } from '../src/model.ts'
 
-/**
- * Inject an agentic audit leaf under every composite whose children are all
- * programmatic. The audit is required:false / tolerable and is not referenced
- * by any completion expression, so it never affects composite or root
- * settlement — it only makes the graph legal under the programmatic-subtree
- * rule. When no agentic runner is installed the audit settles inconclusive.
- */
-export function injectAgenticAudit(graph: DogGraphInput): DogGraphInput {
- const firstArtifactId = Object.values(graph.nodes)
-  .flatMap(node => Object.entries(node.verifierParams ?? {}))
-  .find(([key]) => key === 'artifactId')?.[1] as string | undefined
- const artifactId = typeof firstArtifactId === 'string' && firstArtifactId.length > 0 ? firstArtifactId : 'artifact'
- const parentIds = new Set(graph.contains.map(edge => edge.parent))
- const compositeIds = Object.entries(graph.nodes)
-  .filter(([, node]) => node.kind === 'composite')
-  .map(([id]) => id)
- const needsAudit = compositeIds.filter(id => parentIds.has(id) || id === graph.root)
- const nodes = { ...graph.nodes }
- const contains = [...graph.contains]
- for (const parent of needsAudit) {
-  const children = graph.contains.filter(edge => edge.parent === parent).map(edge => edge.child)
-  if (children.length === 0) continue
-  if (children.some(child => graph.nodes[child]?.kind === 'leaf' && graph.nodes[child]?.verifier?.id === 'vision.overlap')) continue
-  const auditId = `agentic-audit-${parent}`
-  if (nodes[auditId] !== undefined) continue
-  nodes[auditId] = {
-   kind: 'leaf',
-   title: `Agentic audit for ${parent}`,
-   constraint: 'hard',
-   verifier: { id: 'vision.overlap', version: '1' },
-   verifierParams: { artifactId },
+export interface EngineFixture {
+  root: string
+  config: DogConfig
+}
+
+export async function temporaryRoot(): Promise<string> {
+  return mkdtemp(join(tmpdir(), 'dsh-dog-'))
+}
+
+/** Create a minimal programmatic script library under the fixture root. */
+export async function ensureScripts(root: string, names: readonly string[] = ['file-non-empty']): Promise<void> {
+  const scripts = join(root, 'scripts')
+  await mkdir(scripts, { recursive: true })
+  for (const name of names) {
+    const path = join(scripts, name)
+    await writeFile(path, '#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ verdict: "pass", evidence: { script: true } }))\n')
+    await chmod(path, 0o755)
   }
-  contains.push({ parent, child: auditId, required: false, failure: 'tolerable' })
- }
- return { ...graph, nodes, contains }
+}
+
+export function mkConfig(root: string, scripts: string): DogConfig {
+  return {
+    workspaceRoot: root,
+    scriptsDirectory: scripts,
+    storageDirectory: 'dog',
+    maxGraphNodes: 64,
+    maxExpressionNodes: 128,
+    maxExpressionDepth: 16,
+    maxSandboxBytes: 1024 * 1024,
+    allowPartialRoot: false,
+    maxConcurrentVerifications: 1,
+    revalidateThreshold: 0.3,
+    gmDigestAlgo: 'sha256',
+  }
+}
+
+export function leafNode(overrides: Partial<{ title: string; constraint: 'hard' | 'soft'; target: string; verifier: VerifierShape }> = {}): GoalNodeInput {
+  return {
+    kind: 'leaf' as const,
+    title: 'leaf',
+    constraint: 'hard' as const,
+    target: 'artifact.txt' as const,
+    verifier: { mode: 'programmatic' as const, script: 'file-non-empty' },
+    ...overrides,
+  } as GoalNodeInput
+}
+
+export function compositeNode(completion: object, overrides: Partial<{ title: string; constraint: 'hard' | 'soft'; target: string; verifier?: VerifierShape }> = {}): GoalNodeInput {
+  return {
+    kind: 'composite' as const,
+    title: 'root',
+    constraint: 'hard' as const,
+    target: 'artifact.txt' as const,
+    completion: completion as GoalNodeInput['completion'],
+    ...overrides,
+  } as GoalNodeInput
+}
+
+export function graph(
+  nodes: Record<string, GoalNodeInput>,
+  contains: DogGraphInput['contains'],
+  id = 'demo',
+): DogGraphInput {
+  return {
+    schemaVersion: '0.9',
+    id,
+    root: 'root',
+    nodes,
+    contains,
+    dependsOn: [],
+  }
+}
+
+/** Fake programmatic kernel: succeeds without executing a real script. */
+export function stubProgrammatic(): (script: string, inputPath: string, env?: import('../src/verifiers.ts').VerifierExecutionEnv) => Promise<import('../src/verifiers.ts').Verdict> {
+  return async () => ({ state: 'pass', evidence: { stubbed: true } })
+}
+
+/** Fake agentic kernel: returns a fixed verdict. */
+export function stubAgentic(verdict: 'pass' | 'fail' | 'inconclusive' = 'pass'): (instruction: string, workspace?: import('../src/verifiers.ts').IsolatedWorkspace, inputPath?: string, env?: import('../src/verifiers.ts').VerifierExecutionEnv) => Promise<import('../src/verifiers.ts').Verdict> {
+  return async () => ({ state: verdict, evidence: { stubbed: true, verdict } })
 }

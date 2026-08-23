@@ -126,6 +126,24 @@ def page_html(slide, page_w, page_h):
     return head + body + ''.join(shapes) + ''.join(charts) + '</body></html>'
 
 
+def pdf_html(pages, page_w, page_h):
+    parts = [
+        '<!doctype html><html><head><meta charset="utf-8"><style>'
+        '@page { size: %dpx %dpx; margin: 0; }'
+        'body { margin: 0; background: #fff; }'
+        '.page { page-break-after: always; width: %dpx; height: %dpx; position: relative; overflow: hidden; }'
+        '.page:last-child { page-break-after: auto; }'
+        '</style></head><body>' % (page_w, page_h, page_w, page_h)
+    ]
+    for html in pages:
+        body = html.split('<body', 1)[1]
+        body = body.rsplit('</body>', 1)[0]
+        parts.append(f'<div class="page">{body}')
+        parts.append('</div>')
+    parts.append('</body></html>')
+    return ''.join(parts)
+
+
 def html_escape(text):
     return (
         text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -144,8 +162,10 @@ def main():
     page_w = emu_px(prs.slide_width)
     page_h = emu_px(prs.slide_height)
     with tempfile.TemporaryDirectory() as tmp:
+        all_pages = []
         for idx, slide in enumerate(prs.slides, 1):
             html = page_html(slide, int(page_w), int(page_h))
+            all_pages.append(html)
             html_path = Path(tmp) / f'slide-{idx}.html'
             html_path.write_text(html, encoding='utf-8')
             png = out / f'slide-{idx}.png'
@@ -156,6 +176,17 @@ def main():
                 html_path.as_uri(),
             ], capture_output=True, timeout=60, check=False)
             print(f'slide-{idx}.png {png.stat().st_size if png.exists() else "FAILED"}')
+        # Also produce a combined printable PDF at deck.pdf (approximate visuals,
+        # same page geometry) so a visual-capable reader can open one document.
+        combined = Path(tmp) / 'deck.html'
+        combined.write_text(pdf_html(all_pages, int(page_w), int(page_h)), encoding='utf-8')
+        pdf = out / 'deck.pdf'
+        subprocess.run([
+            CHROME, '--headless=new', '--disable-gpu', '--no-pdf-header-footer',
+            f'--print-to-pdf={pdf}',
+            combined.as_uri(),
+        ], capture_output=True, timeout=60, check=False)
+        print(f'deck.pdf {pdf.stat().st_size if pdf.exists() else "FAILED"}')
     return 0
 
 

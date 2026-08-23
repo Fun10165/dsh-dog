@@ -36,17 +36,57 @@ export async function waitForSettlement(
  return { state: 'inconclusive', observation: { outcome: 'timed out waiting for verifier result' }, waitedMs: Date.now() - startAt }
 }
 
+/**
+ * Same as {@link waitForSettlement}, but short-circuits once the verifier child
+ * has finished its turn: if the settlement file is still absent shortly after
+ * the child's turn ended, the child is not coming back — settle inconclusive
+ * immediately instead of blocking the run for the full timeout.
+ */
+export async function waitForSettlementFlexible(
+ resultPath: string,
+ signal: AbortSignal,
+ timeoutMs: number,
+ childSettled: () => Promise<boolean>,
+): Promise<SettlementFileSummary> {
+ const startAt = Date.now()
+ while (Date.now() - startAt < timeoutMs) {
+  if (signal.aborted) return { state: 'inconclusive', observation: { outcome: 'aborted' }, waitedMs: Date.now() - startAt }
+  try {
+   return { ...parseSettlementFile(await readFile(resultPath, 'utf8')), waitedMs: Date.now() - startAt }
+  } catch (error) {
+   if (!isMissing(error)) {
+    return { state: 'inconclusive', observation: { outcome: 'unreadable settlement file' }, waitedMs: Date.now() - startAt }
+   }
+   if (await childSettled()) {
+    // Subagent turns may end while the model is still composing the file
+    // (multi-turn fixes); the workspace now outlives the turn, so give a
+    // generous last-write window before settling inconclusive.
+    await sleep(15_000)
+    try {
+     return { ...parseSettlementFile(await readFile(resultPath, 'utf8')), waitedMs: Date.now() - startAt }
+    } catch {
+     return { state: 'inconclusive', observation: { outcome: 'verifier child finished without writing the settlement file' }, waitedMs: Date.now() - startAt }
+    }
+   }
+   await sleep(500)
+  }
+ }
+ return { state: 'inconclusive', observation: { outcome: 'timed out waiting for verifier result' }, waitedMs: Date.now() - startAt }
+}
+
 export function parseSettlementFile(source: string): { readonly state: 'pass' | 'fail' | 'inconclusive'; readonly observation: Record<string, JsonValue> } {
  const value = parseLooseJson(source)
  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
   return { state: 'inconclusive', observation: { outcome: 'settlement file is not a JSON object' } }
  }
  const raw = value as Record<string, unknown>
- const state = raw.settlement
+ // 0.9 contract: {"verdict": "pass|fail|inconclusive", "evidence": <any JSON>}.
+ // Accept the pre-0.9 {"settlement", "observation"} spelling as a fallback.
+ const state = raw.verdict ?? raw.settlement
  if (state !== 'pass' && state !== 'fail' && state !== 'inconclusive') {
   return { state: 'inconclusive', observation: { outcome: 'settlement file has an invalid settlement value' } }
  }
- const observation = raw.observation
+ const observation = raw.evidence ?? raw.observation
  if (observation === undefined) {
   return { state: 'inconclusive', observation: { outcome: 'settlement file has no observation evidence' } }
  }
