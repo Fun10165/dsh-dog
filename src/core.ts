@@ -604,7 +604,9 @@ export class DogEngine {
     // programmatic scripts are cheap, deterministic, and must run as soon as
     // their dependencies are satisfied instead of queuing behind agentics.
     const isAgentic = plan?.verifier.mode === 'agentic'
-    if (isAgentic && inFlightAgentic.size >= concurrency) break
+    // Skip (not break) when the agentic budget is full: later pendings may be
+    // programmatic or newly-released dependents that must still be examined.
+    if (isAgentic && inFlightAgentic.size >= concurrency) continue
     pendingLeaves.delete(goalId)
     const task = settleLeaf(goalId)
      .then(result => {
@@ -635,82 +637,101 @@ export class DogEngine {
   }
   await drain()
 
-  // ---- composites settle in postorder after all leaves have settled.
-  for (const goalId of postorder(compiled.input)) {
-   const node = compiled.input.nodes[goalId]
-   if (node === undefined || node.kind !== 'composite') continue
-   const blockedDependency = (dependencies.get(goalId) ?? []).find(target => !dependencyComplete(goals[target]))
-   let result: GoalResult
-   if (blockedDependency !== undefined) {
-    const state = dependencyNeedsHuman(goals[blockedDependency]) ? 'needs_human' : 'blocked'
-    result = { state, reason: `waiting for dependency ${blockedDependency} to complete` }
-    await appendRuntimeEvent(goalId, 'dependency_blocked', { state, reason: result.reason ?? '' })
-   } else {
-    const startedAt = this.now().toISOString()
-    goals[goalId] = { state: 'running' }
-    result = evaluateComposite(goalId)
-    // v0.9: optional whole-object assertion — the composite declares its own
-    // verifier; run it once the whole subtree has settled, then merge: a failing
-    // or inconclusive assertion can demote the logical result, never promote it.
-    // A logical failure cannot be repaired by the assertion (merge is demote-only),
-    // so skip the whole-object review entirely once the subtree already failed.
-    const wholePlan = planFor(goalId)
-    if (wholePlan !== undefined && result.state !== 'failure') {
-     try {
-      const workspace = await this.workspaces.acquire(this.workspaceBaseDirs.get(runId))
-      runWorkspaces.add(workspace)
-      await appendRuntimeEvent(goalId, 'verifier_started', { state: 'running', verifier: { mode: wholePlan.verifier.mode }, attempt: 1 })
-      const inputPath = await prepareInputPath(wholePlan, workspace, this.repository)
-      const settled = await runPlan(
-       wholePlan,
-       workspace,
-       inputPath,
-       { parent: options.agent, signal, runId, goalId },
-       this.programmatic,
-       this.agentic,
-      )
-      const phase = settled.state === 'pass' ? 'verifier_passed' : settled.state === 'fail' ? 'verifier_failed' : 'verifier_inconclusive'
-      await appendRuntimeEvent(goalId, phase, {
-       at: this.now().toISOString(),
-       state: settled.state === 'pass' ? 'success' : settled.state === 'fail' ? 'failure' : 'needs_human',
-       verifier: { mode: wholePlan.verifier.mode },
-      })
-      result = mergeWholeAssertion(result, settled)
-      // Carry the whole-object verdict (and its rationale) on the composite
-      // goal result itself, so dog_status surfaces the evidence — previously
-      // the merged failure carried only a reason and the rationale was lost.
-      const record: VerificationRecord = {
-       schemaVersion: '0.1',
-       goalId,
-       runId,
-       graphId: compiled.input.id,
-       graphDigest: compiled.graphDigest,
-       judgment: wholePlan.judgment,
-       ...(wholePlan.gmDigest === undefined ? {} : { gmDigest: wholePlan.gmDigest }),
-       passed: settled.state === 'pass' ? true : settled.state === 'fail' ? false : null,
-       ...(settled.evidence === undefined ? {} : { evidence: settled.evidence }),
-       at: this.now().toISOString(),
-      }
-      await this.repository.appendVerification(record)
-      result = { ...result, verification: record }
-     } catch (error) {
-      result = { state: 'failure', reason: `whole-object assertion failed: ${boundedMessage(messageOf(error))}` }
+  // ---- composites settle once their subtree has settled, and MUTUALLY
+  // INDEPENDENT composites run their whole-object assertions concurrently
+  // (watermark, same agentic budget as leaves) — never a serial for loop.
+  const settleComposite = async (goalId: string): Promise<void> => {
+   const startedAt = this.now().toISOString()
+   goals[goalId] = { state: 'running' }
+   // Persist the running state immediately: the panel reads the persisted
+   // run record, so a composite shows running during its whole-object
+   // assertion instead of stuck at the initial 'pending'.
+   await saveProgress(this.now().toISOString())
+   let result: GoalResult = evaluateComposite(goalId)
+   const wholePlan = planFor(goalId)
+   if (wholePlan !== undefined && result.state !== 'failure') {
+    try {
+     const workspace = await this.workspaces.acquire(this.workspaceBaseDirs.get(runId))
+     runWorkspaces.add(workspace)
+     await appendRuntimeEvent(goalId, 'verifier_started', { state: 'running', verifier: { mode: wholePlan.verifier.mode }, attempt: 1 })
+     const inputPath = await prepareInputPath(wholePlan, workspace, this.repository)
+     const settled = await runPlan(
+      wholePlan,
+      workspace,
+      inputPath,
+      { parent: options.agent, signal, runId, goalId },
+      this.programmatic,
+      this.agentic,
+     )
+     const phase = settled.state === 'pass' ? 'verifier_passed' : settled.state === 'fail' ? 'verifier_failed' : 'verifier_inconclusive'
+     await appendRuntimeEvent(goalId, phase, {
+      at: this.now().toISOString(),
+      state: settled.state === 'pass' ? 'success' : settled.state === 'fail' ? 'failure' : 'needs_human',
+      verifier: { mode: wholePlan.verifier.mode },
+     })
+     result = mergeWholeAssertion(result, settled)
+     const record: VerificationRecord = {
+      schemaVersion: '0.1',
+      goalId,
+      runId,
+      graphId: compiled.input.id,
+      graphDigest: compiled.graphDigest,
+      judgment: wholePlan.judgment,
+      ...(wholePlan.gmDigest === undefined ? {} : { gmDigest: wholePlan.gmDigest }),
+      passed: settled.state === 'pass' ? true : settled.state === 'fail' ? false : null,
+      ...(settled.evidence === undefined ? {} : { evidence: settled.evidence }),
+      at: this.now().toISOString(),
      }
+     await this.repository.appendVerification(record)
+     result = { ...result, verification: record }
+    } catch (error) {
+     result = { state: 'failure', reason: `whole-object assertion failed: ${boundedMessage(messageOf(error))}` }
     }
-    await appendRuntimeEvent(goalId, 'composite_evaluated', {
-     state: result.state,
-     ...(result.reason === undefined ? {} : { reason: result.reason }),
-    })
-    await appendRuntimeEvent(goalId, 'goal_settled', {
-     at: this.now().toISOString(),
-     state: result.state,
-     ...(result.reason === undefined ? {} : { reason: result.reason }),
-    })
-    void startedAt
    }
+   await appendRuntimeEvent(goalId, 'composite_evaluated', {
+    state: result.state,
+    ...(result.reason === undefined ? {} : { reason: result.reason }),
+   })
+   await appendRuntimeEvent(goalId, 'goal_settled', {
+    at: this.now().toISOString(),
+    state: result.state,
+    ...(result.reason === undefined ? {} : { reason: result.reason }),
+   })
+   void startedAt
    goals[goalId] = result
    await saveProgress(this.now().toISOString())
   }
+  const compositePending = new Set(
+   postorder(compiled.input).filter(id => compiled.input.nodes[id]?.kind === 'composite'),
+  )
+  const compositeInFlight = new Set<Promise<void>>()
+  while (!aborted && (compositePending.size > 0 || compositeInFlight.size > 0)) {
+   for (const goalId of [...compositePending]) {
+    const unresolvedChild = (children.get(goalId) ?? []).find(id => !dependencyComplete(goals[id]))
+    if (unresolvedChild !== undefined) continue
+    const blockedDependency = (dependencies.get(goalId) ?? []).find(target => !dependencyComplete(goals[target]))
+    if (blockedDependency !== undefined) {
+     const state = dependencyNeedsHuman(goals[blockedDependency]) ? 'needs_human' : 'blocked'
+     goals[goalId] = { state, reason: `waiting for dependency ${blockedDependency} to complete` }
+     compositePending.delete(goalId)
+     await saveProgress(this.now().toISOString())
+     continue
+    }
+    const plan = planFor(goalId)
+    const isAgentic = plan?.verifier.mode === 'agentic'
+    // Composite assertions share the agentic budget with leaves.
+    if (isAgentic && inFlightAgentic.size >= concurrency) continue
+    compositePending.delete(goalId)
+    const task = settleComposite(goalId)
+     .then(() => undefined)
+     .finally(() => { compositeInFlight.delete(task); if (isAgentic) inFlightAgentic.delete(task) })
+    compositeInFlight.add(task)
+    if (isAgentic) inFlightAgentic.add(task)
+   }
+   if (compositeInFlight.size === 0) break
+   await Promise.race([...compositeInFlight])
+  }
+  await Promise.allSettled([...compositeInFlight])
 
   const rootResult = goals[compiled.input.root]
   const rootState = terminalState(rootResult, this.config.allowPartialRoot)
