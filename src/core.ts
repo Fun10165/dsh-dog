@@ -129,11 +129,16 @@ export class DogEngine {
  }
 
  /** Compile and persist one graph revision against the captured input files. */
- async create(value: unknown): Promise<CompiledGraph> {
+ async create(value: unknown, options: { readonly captureBaseDir?: string } = {}): Promise<CompiledGraph> {
   const graph = this.parse(value)
   this.validateWorkspaceRefs(graph)
   const acceptancePlans: Record<string, AcceptancePlan> = {}
   const capturedCache = new Map<string, CapturedInputFile>()
+  // Capture roots: the invoking session's cwd first (that is where the user is
+  // working), then the configured workspace root as the fallback.
+  const captureRoots = options.captureBaseDir !== undefined && options.captureBaseDir.length > 0
+   ? [options.captureBaseDir, this.workspaceRoot]
+   : [this.workspaceRoot]
   for (const [goalId, node] of Object.entries(graph.nodes)) {
    if (node.verifier === undefined) continue
    const workspaceFile = requireTarget(node.target, goalId)
@@ -142,7 +147,7 @@ export class DogEngine {
     captured = capturedCache.get(workspaceFile)
     if (captured === undefined) {
      captured = await captureWorkspaceTarget(
-      this.workspaceRoot,
+      captureRoots,
       workspaceFile,
       this.config.maxSandboxBytes,
       this.repository,

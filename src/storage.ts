@@ -334,52 +334,62 @@ export async function captureWorkspaceFile(
  }
 }
 
-/** Capture one target: a single file, or a directory packed into a .tar (relative structure preserved). */
+/**
+ * Capture one target: a single file, or a directory packed into a .tar
+ * (relative structure preserved). Roots are tried in order — the invoking
+ * session cwd first (which is where the user is actually working), then the
+ * configured workspace root as fallback. A non-missing error (escape, not a
+ * regular file…) always aborts; only a target absent from every root settles
+ * as `missing`.
+ */
 export async function captureWorkspaceTarget(
- workspaceRoot: string,
+ captureRoots: readonly string[],
  target: string,
  maxBytes: number,
  repository: DogRepository,
 ): Promise<CapturedInputFile> {
- try {
-  const absolutePath = await resolveWorkspacePath(workspaceRoot, target)
-  const metadata = await stat(absolutePath)
-  let bytes: Uint8Array
-  let packed = false
-  if (metadata.isDirectory()) {
-   const rootPath = resolve(workspaceRoot)
-   assertTreeSafe(rootPath, absolutePath)
-   bytes = execFileSync('tar', ['-C', rootPath, '-cf', '-', target], { maxBuffer: maxBytes * 4 })
-   packed = true
-  } else if (metadata.isFile()) {
-   bytes = await readFile(absolutePath)
-  } else {
-   throw new Error(`target ${target} is not a regular file or directory`)
+ for (const root of captureRoots) {
+  try {
+   const absolutePath = await resolveWorkspacePath(root, target)
+   const metadata = await stat(absolutePath)
+   let bytes: Uint8Array
+   let packed = false
+   if (metadata.isDirectory()) {
+    const rootPath = resolve(root)
+    assertTreeSafe(rootPath, absolutePath)
+    bytes = execFileSync('tar', ['-C', rootPath, '-cf', '-', target], { maxBuffer: maxBytes * 4 })
+    packed = true
+   } else if (metadata.isFile()) {
+    bytes = await readFile(absolutePath)
+   } else {
+    throw new Error(`target ${target} is not a regular file or directory`)
+   }
+   if (bytes.byteLength > maxBytes) throw new Error(`target ${target} exceeds ${maxBytes} bytes`)
+   const sha256 = createHash('sha256').update(bytes).digest('hex')
+   const input: CapturedInput = {
+    path: target,
+    digest: `sha256:${sha256}`,
+    exists: true,
+    byteLength: bytes.byteLength,
+    sha256,
+    ...(packed ? { packed: true } : {}),
+   }
+   await repository.putSandboxFile(input, bytes)
+   return { input }
+  } catch (error) {
+   if (!isMissing(error)) throw error
+   // absent here — try the next capture root
   }
-  if (bytes.byteLength > maxBytes) throw new Error(`target ${target} exceeds ${maxBytes} bytes`)
-  const sha256 = createHash('sha256').update(bytes).digest('hex')
-  const input: CapturedInput = {
-   path: target,
-   digest: `sha256:${sha256}`,
-   exists: true,
-   byteLength: bytes.byteLength,
-   sha256,
-   ...(packed ? { packed: true } : {}),
-  }
-  await repository.putSandboxFile(input, bytes)
-  return { input }
- } catch (error) {
-  if (!isMissing(error)) throw error
-  const input: CapturedInput = {
-   path: target,
-   digest: `missing:${sha256Json({ path: target })}`,
-   exists: false,
-   byteLength: 0,
-   sha256: '',
-  }
-  await repository.putSandboxFile(input, undefined)
-  return { input }
  }
+ const input: CapturedInput = {
+  path: target,
+  digest: `missing:${sha256Json({ path: target })}`,
+  exists: false,
+  byteLength: 0,
+  sha256: '',
+ }
+ await repository.putSandboxFile(input, undefined)
+ return { input }
 }
 
 /** Reject symlinks anywhere in the tree before packing (tar would otherwise carry them over). */

@@ -52,6 +52,40 @@ describe('v0.9 engine', () => {
     expect(plan.judgment.mode).toBe('programmatic')
   })
 
+  it('captures targets from the invoking session cwd first, with the configured root as fallback', async () => {
+    const root = await tmpRoot()
+    const sessionCwd = await tmpRoot()
+    await writeFile(join(sessionCwd, 'deck.md'), 'session object')
+    await writeFile(join(root, 'legacy.md'), 'fallback object')
+    const dog = engine(root)
+    // Target lives in the session cwd -> captured from there.
+    const fromCwd = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({ target: 'deck.md' }),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]), {
+      captureBaseDir: sessionCwd,
+    })
+    expect(fromCwd.acceptancePlans.leaf!.input?.exists).toBe(true)
+    expect(fromCwd.acceptancePlans.leaf!.input?.path).toBe('deck.md')
+    // Target absent from cwd but present in the configured root -> fallback.
+    const fromRoot = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({ target: 'legacy.md' }),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }], 'fallback-graph'), {
+      captureBaseDir: sessionCwd,
+    })
+    expect(fromRoot.acceptancePlans.leaf!.input?.exists).toBe(true)
+    // Absent from both roots -> honest missing.
+    const missing = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({ target: 'nope.md' }),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }], 'missing-graph'), {
+      captureBaseDir: sessionCwd,
+    })
+    expect(missing.acceptancePlans.leaf!.input?.exists).toBe(false)
+    expect(missing.acceptancePlans.leaf!.input?.digest).toMatch(/^missing:/)
+  })
+
   it('runs a programmatic leaf to success and recomputes the root', async () => {
     const root = await tmpRoot()
     await writeFile(join(root, 'artifact.txt'), 'verified')

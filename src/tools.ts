@@ -66,7 +66,11 @@ export function createDogTools(
       output: JSON_OUTPUT,
       async execute(args, exec) {
         exec.signal.throwIfAborted()
-        const compiled = await engine().create(args.graph)
+        const cwd = exec.agent?.session.header.cwd
+        const compiled = await engine().create(
+          args.graph,
+          typeof cwd === 'string' && cwd.length > 0 ? { captureBaseDir: cwd } : {},
+        )
         exec.signal.throwIfAborted()
         return jsonResult(compiledGraphSummary(compiled))
       },
