@@ -1,6 +1,6 @@
 /** DoG v0.9 engine semantics: compilation, two-kernel judgment, propagation, inheritance. */
 
-import { writeFile, mkdir, rm } from 'node:fs/promises'
+import { writeFile, mkdir, rm, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, it, expect, afterEach } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -36,6 +36,18 @@ function engine(root: string, opts: { programmatic?: ReturnType<typeof stubProgr
 }
 
 describe('v0.9 engine', () => {
+  it('validates every shipped example graph (examples/*.graph.json)', async () => {
+    const root = await tmpRoot()
+    const dog = engine(root)
+    const examplesDir = new URL('../examples', import.meta.url).pathname
+    for (const name of await readdir(examplesDir)) {
+      if (!name.endsWith('.graph.json')) continue
+      const candidate = JSON.parse(await readFile(`${examplesDir}/${name}`, 'utf8')) as unknown
+      const report = dog.validate(candidate)
+      expect(report.valid, `${name} should validate: ${report.errors.join('; ')}`).toBe(true)
+    }
+  })
+
   it('compiles a graph with programmatic leaves and captures the target object', async () => {
     const root = await tmpRoot()
     await writeFile(join(root, 'artifact.txt'), 'verified')
