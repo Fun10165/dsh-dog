@@ -33,6 +33,8 @@ import type { IsolatedWorkspace } from './verifiers.ts'
 export interface DogEngineOptions {
  readonly config: DogConfig
  readonly repository: DogRepository
+ /** Runtime knob source: read once per run, so host settings changes apply without a restart. */
+ readonly liveConfig?: () => Partial<Pick<DogConfig, 'maxConcurrentVerifications'>>
  /** Programmatic kernel (script executor) — host wiring; may be installed later. */
  readonly programmatic?: ProgrammaticRunner
  /** Agentic kernel (worker-agent launcher) — host wiring; may be installed later. */
@@ -85,6 +87,7 @@ const GOAL_AGENT_ROLES = new Set<GoalAgentRole>(['orchestrator', 'verifier', 're
 export class DogEngine {
  private readonly config: DogConfig
  private readonly repository: DogRepository
+ private readonly liveConfig: ((() => Partial<Pick<DogConfig, 'maxConcurrentVerifications'>>) | undefined)
  private programmatic: ProgrammaticRunner | undefined
  private agentic: AgenticRunner | undefined
  private readonly workspaces: WorkspaceManager
@@ -107,6 +110,7 @@ export class DogEngine {
   validateHostConfig(options.config)
   this.config = options.config
   this.repository = options.repository
+  this.liveConfig = options.liveConfig
   this.programmatic = options.programmatic
   this.agentic = options.agentic
   this.workspaces = options.workspaces ?? new WorkspaceManager()
@@ -553,7 +557,8 @@ export class DogEngine {
 
   // ---- verify: ready-leaves parallel scheduling, then composite settlement.
   const pendingLeaves = new Set(leaves.filter(id => goals[id]?.state === 'pending'))
-  const concurrency = Math.max(1, Math.floor(this.config.maxConcurrentVerifications))
+  const configuredConcurrency = this.liveConfig?.()?.maxConcurrentVerifications ?? this.config.maxConcurrentVerifications
+  const concurrency = Math.max(1, Math.floor(configuredConcurrency))
   const inFlight = new Set<Promise<void>>()
   const inFlightAgentic = new Set<Promise<void>>()
   // Workspaces outlive their verifier: a verifier subagent may still write its

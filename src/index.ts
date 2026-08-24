@@ -168,6 +168,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         ...(agenticRunnerRef === undefined ? {} : { agentic: agenticRunnerRef }),
         repository,
         workspaces: new WorkspaceManager({ baseDir: effective.workspaceRoot }),
+        liveConfig: () => {
+          const live = settingsCurrent?.()
+          return live === undefined ? {} : { maxConcurrentVerifications: live.maxConcurrentVerifications }
+        },
         resolveLivingAgent: sessionId => {
           const agents = ctx.get('agents') as AgentRegistry | undefined
           return agents?.get(sessionId as SessionId)
