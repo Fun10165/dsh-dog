@@ -174,7 +174,7 @@ export function createDogTools(
         const jobs = hostJobs()
         if (jobs !== undefined && run.state === 'running') {
           const controller = new AbortController()
-          const done = engine().waitRun(args.runId, { signal: controller.signal, timeoutMs: 30 * 60_000 })
+          const done = engine().waitRun(args.runId, { signal: controller.signal, timeoutMs: 120 * 60_000 })
             .then(settled => ({
               status: 'completed' as const,
               output: JSON.stringify(runSummary(settled)),

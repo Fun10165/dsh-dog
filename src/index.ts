@@ -138,7 +138,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     try {
       out = execFileSync(resolveScriptPath(scriptsDir, script), [inputPath], {
         encoding: 'utf8',
-        timeout: 300_000,
+        timeout: 900_000,
         maxBuffer: 32 * 1024 * 1024,
       })
     } catch (error) {
@@ -226,7 +226,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const settlement = await waitForSettlementFlexible(
         resultPath,
         signal,
-        300_000,
+        900_000,
         async () => verifierChildTurnEnded(ctx, sessionId),
       )
       if (runId !== undefined && parent !== undefined && parentSessionId.length > 0) {
