@@ -2,7 +2,9 @@
 
 **DAG of Goals (DoG)** — turn a *non-formal* goal ("make a high-quality deck", "write a truly good article") into a DAG of independently verifiable subgoals, and let each subgoal be judged by its **own isolated verifier** before anything counts as done.
 
-> Protocol `schemaVersion` `0.9` · product **v1.0.0 stable** · [Changelog](docs/CHANGELOG.md) · [Spec](SPEC.md) · [Architecture 0.9](docs/architecture-0.9.md)
+> Protocol `schemaVersion` `0.9` · product **v1.1.0 stable** · [Changelog](docs/CHANGELOG.md) · [Spec](SPEC.md) · [Architecture 0.9](docs/architecture-0.9.md)
+
+> **v1.1**: capture roots follow the invoking session cwd (configured `workspaceRoot` is the fallback); verifier/programmatic timeouts 15 min; agentic concurrency reads live settings per-run (no restart); whole-object assertions record their verdict + evidence on the composite; verifier settlement text is preserved in `~/.dsh/dog/settlements/`.
 
 ---
 

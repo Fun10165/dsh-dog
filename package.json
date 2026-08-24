@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-dog",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "DeepSeek Harness DoG (DAG of Goals) graph validation and trusted artifact verification plugin.",
   "private": true,
   "type": "module",

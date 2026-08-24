@@ -1,5 +1,58 @@
 # Changelog
 
+## v1.1.0 (2026-08-24) — work-anywhere + inspectability
+
+### Capture roots follow where you work
+- **Invoking session cwd is the first capture root**: `dog_create` now looks
+  for `target` in the session's working directory first; the configured
+  `dog.workspaceRoot` is the fallback. Working in a different project no
+  longer requires touching settings — the working directory is runtime state
+  and never leaks into configuration. Escape protections apply per root.
+- Regression test: cwd hit → fallback root hit → honest `missing` when the
+  target is absent from both.
+
+### Timeouts & budgets
+- **Verifier (agentic leaf + whole-object assertion) settlement wait: 300s → 900s (15 min)**.
+- **Programmatic script execution: 300s → 900s**.
+- `dog_wait` background job wait budget: 30 min → 120 min (long multi-leaf
+  runs no longer get their background wait cut short). Timeout semantics
+  unchanged: timeouts settle honestly `inconclusive` → `needs_human`, never a
+  guessed verdict.
+
+### Live settings (no restart)
+- `maxConcurrentVerifications` is now read **per run** through a live config
+  source: editing `~/.dsh/settings.yaml` takes effect on the next run without
+  restarting the host process.
+
+### Composite evidence retained
+- **Whole-object assertion verdict + evidence are now recorded on the
+  composite goal result** (and appended to `verifications/<runId>.jsonl`).
+  Previously the merged failure carried only `whole-object assertion failed`
+  and the rationale was lost — `dog_status` now surfaces the reviewer's
+  reasoning like any leaf.
+- Regression test: assertion failure must carry `verification.evidence`.
+
+### Settlement text preserved
+- The verbatim verifier settlement is saved to
+  `~/.dsh/dog/settlements/<sha256(runId)>-<sha256(goalId)>.json` the moment it
+  is read. Verifier workspaces are still reclaimed at run teardown, but "what
+  happened" stays inspectable forever.
+
+### Docs & demos
+- New exhaustive agent manual: `docs/agent-guide.md` (tool surface, graph
+  language, state semantics, file-level result reading, diagnostics,
+  best practices, setup/run). README rewritten around the core idea
+  (non-formal decomposition + independent verification) with honest
+  reproducibility limits.
+- `examples/` demo module: article-quality (four-dimension gate) and
+  dog-smoke-multi (3-level tree + mixed kernels + dependency edge).
+- headless profile is documented as *not supported* (one-shot process kills
+  verifier workers — known limitation); web/tui are the supported hosts.
+
+### Tests
+- 35 engine/plugin tests (added: cwd-first capture roots, whole-object
+  evidence retention; existing suite maintained green).
+
 ## v1.0.0 (2026-08-23) — stable
 
 DAG of Goals (dsh-dog) reaches 1.0 after the v0.9 judgment-layer rework and a
