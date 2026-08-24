@@ -266,7 +266,95 @@ settings 由 **host 维护**(改后重启);**agent 绝不改配置,也不把配�
 
 ---
 
-## 7. 常见错误 + 诊断表(实测集)
+## 7. 怎么把 DoG 跑起来(安装与启动)
+
+> 这一节写给"要让 dsh 里出现 DoG 的人"(宿主/运维视角)。agent 只需要知道:`dog_*` 工具**存在于你的工具面**时即可用;它们需要 dsh 是**常驻进程**(web/tui)。
+
+### 7.1 构建插件
+```sh
+git clone <your-fork-or-repo> dsh-dog && cd dsh-dog
+pnpm install
+pnpm run check        # = typecheck + 33 tests + build(lib/)
+```
+产物在 `lib/`(插件的 server+client bundle);`cordis.patch.yml` 是插件入口清单。
+
+### 7.2 安装到 profile
+```sh
+dsh plugin --profile web add "$PWD"        # web:UI 面板 + 工具面(推荐,常驻)
+dsh plugin --profile headless add "$PWD"   # headless:一次性命令行(尽量只跑 programmatic)
+# tui 同理: dsh plugin --profile tui add "$PWD"
+```
+profile 之间独立;装哪个,哪个才有 DoG。
+
+### 7.3 用户级配置(一次性)
+`~/.dsh/settings.yaml` 的 `dog:` 段(字段见 §6)。**由宿主维护**;改完**重启** dsh 生效。配置文件里只有这个,各 profile 共享。
+
+### 7.4 启动与验证
+```sh
+dsh web --port 3080            # 常驻;日志无 "workspaceRoot must be absolute" 等错误
+dsh --profile headless --dump-config | grep dsh-dog   # 确认插件已装配
+dsh --profile headless "创建 DoG 并运行"             # 一次性(注意 7.5)
+```
+
+### 7.5 ⚠️ agentic 验证的运行环境要求
+- **agentic 叶会 fork 常驻 verifier 子代理(活在本进程)**。所以:
+  - `dsh web` / `dsh`(tui)= **常驻 → agentic 可跑**
+  - `dsh --profile headless "…"` = 回答完**进程退出 → 杀光子代理**;agentic 叶会 `needs_human`/中断 —— **一次性模式只适合 programmatic 冒烟**
+- 日常做法:在 web 会话里创建+运行;headless 只做接线验证。
+- 面板(DoG Debugger)在 web 右上/插件槽;只读,不暴露对象字节。
+
+---
+
+## 8. 从 dsh 实例读取结果(工具面之外的读取方式)
+
+> 主路径仍是 **`dog_status` / `dog_wait`**(§1-2)+ **面板**(web,肉眼)。下面是**进程外/取证**读取——宿主机上直接翻开数据。
+
+### 8.1 数据在哪里(全在 `~/.dsh/dog/`)
+
+| 路径 | 内容 | 定位方式 |
+|---|---|---|
+| `runs/<hash>.json` | 完整 DogRun:`goals`(每叶 `verification`:verdict/evidence/judgment)、`rootState`、`runtimeWarning`、`gmDigests`、`invocation`、`workspaceBaseDir` | 文件名 = `sha256Json(runId)`(hash,见 8.2);或用过滤脚本遍历(8.3)|
+| `verifications/<runId>.jsonl` | 每个叶一行 verification(goalId/verdict/evidence/at) | **文件名就是 runId**(最易找!先用它)|
+| `runtime-events/<hash>-<hash>.jsonl` | 每个 goal 事件流(goal_started/verifier_started/…/goal_settled,含 attempt/at) | `sha256Json(runId)-sha256Json(goalId)` |
+| `graphs/<graphDigest>.json` | 编译后图 + `acceptancePlans`(判据锚:instructionHash/scriptDigest,input.digest) | 从 run 的 `graphDigest` |
+| `artifacts/sha256_<digest>.bin/.json` | 捕获对象字节 + 清单(path/digest/byteLength) | 从 plan.input.digest |
+| `graph-index/<hash>.json` / `locks/` | id→digest 索引 / 跨进程文件锁 | 一般不用动 |
+
+### 8.2 定位算法(`sha256Json`)
+runs/runtime-events 的文件名用**规范化 JSON 的 SHA-256**(key 递归排序后再序列化):
+```bash
+node -e 'const c=require("crypto");
+const v="<runId>";  // 标量就是它本身
+console.log(c.createHash("sha256").update(JSON.stringify(v)).digest("hex"))'
+```
+对象要排序:用仓库的 `canonicalJson`(递归 key 排序);标量(如 runId 字符串)无差异。
+
+### 8.3 最省事的读法(建议顺序)
+1. **按 runId 找 verdicts**:`read ~/.dsh/dog/verifications/<runId>.jsonl`(文件名就是 runId,无需 hash)
+2. **按内容找完整 run**:`bash` 一行(SHA 后过滤更直觉):
+   ```bash
+   python3 -c "
+   import json,glob
+   for p in glob.glob('/Users/<you>/.dsh/dog/runs/*.json'):
+       d=json.load(open(p))
+       if d.get('runId','').startswith('<前缀>'):
+           print(p); print(json.dumps(d['goals'],ensure_ascii=False)[:2000])
+   "
+   ```
+3. **事件流(需要 hash)**:拿到 runId/goalId 后按 8.2 计算,或 `glob ~/.dsh/dog/runtime-events/*` 按 mtime 找最近文件。
+
+### 8.4 读什么(取证视角)
+- "这轮到底判了什么/为什么" → `runs/<hash>.json` 的 `goals[*].verification` + `reason`
+- "对象当时是什么字节" → `artifacts/<digest>.bin`(配合 `.json` 清单里的 digest 对齐)
+- "谁在什么时间做过什么" → runtime-events;verifier 子代理会话在 `goal.agentSessions`
+- "图/判据有没有变" → `graphs/<digest>.json` 的 acceptancePlans;与当前 create 对比
+
+### 8.5 面板(人看)
+web 的 DoG Debugger:图修订、run 历史、节点状态+defect、事件流、证据摘要 —— 只读、不暴露对象字节。用鼠标"点开节点"即可;与 §1 工具面数据同源。
+
+---
+
+## 9. 常见错误 + 诊断表(实测集)
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
@@ -280,7 +368,7 @@ settings 由 **host 维护**(改后重启);**agent 绝不改配置,也不把配�
 
 ---
 
-## 8. 撰写高质量图的实践(必读)
+## 10. 撰写高质量图的实践(必读)
 
 **instruction 怎么写(agentic 判据质量 = 这一切的上限)**:
 1. **一句明确的判据**,不要"尽可能……"——写清**标准的边界**:什么算通过、什么不通过;
@@ -307,7 +395,7 @@ settings 由 **host 维护**(改后重启);**agent 绝不改配置,也不把配�
 
 ---
 
-## 9. 一个可直接抄的完整例子
+## 11. 一个可直接抄的完整例子
 
 对象:`harness-article.md`(工作区内);目标:验证这是"真正有质量的文章"(非形式化):
 
@@ -363,7 +451,7 @@ dog_wait     { runId: "<返回值>" }      // 等通知;终态前不总结
 
 ---
 
-## 10. 使用清单(整页自检)
+## 12. 使用清单(整页自检)
 
 发送/执行前:
 - [ ] 目标确实**非形式化**(否则别用 DoG)
