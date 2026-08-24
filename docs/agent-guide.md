@@ -43,7 +43,7 @@
 | 项 | 内容 |
 |---|---|
 | 参数 | `graphId`(string,必填):`dog_create` 返回的 id |
-| 返回 | run 摘要 + `note`:验证在**后台**运行;agentic 叶会 fork verifier Agent(**它们活在本进程**,一次性启动如 `dsh --profile headless` 会在回答后退出并杀死它们——**agentic 验证需要常驻 web/tui 会话**);用 `dog_status` 轮询 |
+| 返回 | run 摘要 + `note`:验证在**后台**运行;agentic 叶会 fork verifier Agent(**它们活在本进程**,任何一次性/headless 启动都会在退出时杀死它们——已知问题,不要用;**agentic 验证只能在常驻 web/tui 会话跑**);用 `dog_status` 轮询 |
 | 语义 | 立即返回(含 rootState=running);后台执行;**每次 dog_run 创建新 runId** |
 
 ### 1.4 `dog_status` —— 读一次当前状态(含证据)
@@ -280,11 +280,14 @@ pnpm run check        # = typecheck + 33 tests + build(lib/)
 
 ### 7.2 安装到 profile
 ```sh
-dsh plugin --profile web add "$PWD"        # web:UI 面板 + 工具面(推荐,常驻)
-dsh plugin --profile headless add "$PWD"   # headless:一次性命令行(尽量只跑 programmatic)
-# tui 同理: dsh plugin --profile tui add "$PWD"
+dsh plugin --profile web add "$PWD"        # 主推荐:UI 面板 + 工具面(常驻)
+dsh plugin --profile tui add "$PWD"        # 交互终端(常驻)
 ```
 profile 之间独立;装哪个,哪个才有 DoG。
+
+> **禁止安装/使用 headless profile**:已知问题——headless 是一次性进程,回答完就退出,
+> 会杀掉它 fork 的 agentic verifier 子代理(引擎已如实降级为 `needs_human`/中断,但这不是可用路径)。
+> 所有 DoG 工作请在 **web / tui(常驻)** 会话中进行。
 
 ### 7.3 用户级配置(一次性)
 `~/.dsh/settings.yaml` 的 `dog:` 段(字段见 §6)。**由宿主维护**;改完**重启** dsh 生效。配置文件里只有这个,各 profile 共享。
@@ -292,15 +295,14 @@ profile 之间独立;装哪个,哪个才有 DoG。
 ### 7.4 启动与验证
 ```sh
 dsh web --port 3080            # 常驻;日志无 "workspaceRoot must be absolute" 等错误
-dsh --profile headless --dump-config | grep dsh-dog   # 确认插件已装配
-dsh --profile headless "创建 DoG 并运行"             # 一次性(注意 7.5)
+dsh plugin --profile web --dump-config | grep dsh-dog   # 确认插件已装配(web profile)
 ```
 
-### 7.5 ⚠️ agentic 验证的运行环境要求
+### 7.5 ⚠️ 运行环境要求(只支持常驻进程)
 - **agentic 叶会 fork 常驻 verifier 子代理(活在本进程)**。所以:
-  - `dsh web` / `dsh`(tui)= **常驻 → agentic 可跑**
-  - `dsh --profile headless "…"` = 回答完**进程退出 → 杀光子代理**;agentic 叶会 `needs_human`/中断 —— **一次性模式只适合 programmatic 冒烟**
-- 日常做法:在 web 会话里创建+运行;headless 只做接线验证。
+  - `dsh web` / `dsh`(tui)= 常驻 → agentic 可跑
+  - **任何一次性/会退出的启动方式都不行**(含 headless 已知问题、脚本 `&` 后台进程)——不要用
+- 日常做法:在 web 会话里创建+运行。
 - 面板(DoG Debugger)在 web 右上/插件槽;只读,不暴露对象字节。
 
 ---
