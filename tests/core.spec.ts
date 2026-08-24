@@ -313,6 +313,30 @@ describe('v0.9 engine', () => {
     expect(run.rootState).toBe('failure')
   })
 
+  it('cancelling aborts in-flight verifiers and never lets the record flip back to completed', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const slowAgentic = async (): Promise<{ state: 'pass'; evidence: Record<string, never> }> => {
+      await new Promise(resolve => setTimeout(resolve, 700))
+      return { state: 'pass' as const, evidence: {} }
+    }
+    const dog = engine(root, { agentic: slowAgentic as ReturnType<typeof stubAgentic> })
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }),
+      leaf: leafNode({ verifier: { mode: 'agentic', instruction: 'anything' } }),
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
+    const started = await dog.startRun(compiled.input.id)
+    await new Promise(resolve => setTimeout(resolve, 80))
+    await dog.cancelRun(started.runId, 'test cancel')
+    // Give the slow stub time to finish — the run record must stay cancelled.
+    await new Promise(resolve => setTimeout(resolve, 1200))
+    const after = await dog.status(started.runId)
+    expect(after.state).toBe('cancelled')
+    expect(after.rootState).toBe('cancelled')
+    expect(after.goals.leaf?.state).not.toBe('success')
+    expect(after.goals.leaf?.state).toBe('cancelled')
+  })
+
   it('runs programmatic leaves without queuing behind the agentic concurrency budget', async () => {
     const root = await tmpRoot()
     await writeFile(join(root, 'artifact.txt'), 'verified')

@@ -35,6 +35,8 @@ export interface DogEngineOptions {
  readonly repository: DogRepository
  /** Runtime knob source: read once per run, so host settings changes apply without a restart. */
  readonly liveConfig?: () => Partial<Pick<DogConfig, 'maxConcurrentVerifications'>>
+ /** Host hook fired after a run is cancelled — used to interrupt its verifier subagents. */
+ readonly onRunCancelled?: (runId: string) => void
  /** Programmatic kernel (script executor) — host wiring; may be installed later. */
  readonly programmatic?: ProgrammaticRunner
  /** Agentic kernel (worker-agent launcher) — host wiring; may be installed later. */
@@ -88,6 +90,8 @@ export class DogEngine {
  private readonly config: DogConfig
  private readonly repository: DogRepository
  private readonly liveConfig: ((() => Partial<Pick<DogConfig, 'maxConcurrentVerifications'>>) | undefined)
+ private readonly onRunCancelled: ((runId: string) => void) | undefined
+ private readonly runControllers = new Map<string, AbortController>()
  private programmatic: ProgrammaticRunner | undefined
  private agentic: AgenticRunner | undefined
  private readonly workspaces: WorkspaceManager
@@ -111,6 +115,7 @@ export class DogEngine {
   this.config = options.config
   this.repository = options.repository
   this.liveConfig = options.liveConfig
+  this.onRunCancelled = options.onRunCancelled
   this.programmatic = options.programmatic
   this.agentic = options.agentic
   this.workspaces = options.workspaces ?? new WorkspaceManager()
@@ -182,7 +187,9 @@ export class DogEngine {
  /** Asynchronous run: returns after the initial record is persisted; verification continues in background. */
  async startRun(graphId: string, options: DogRunOptions = {}): Promise<DogRun> {
   const prepared = await this.prepareRun(graphId, options)
-  this.enqueueBackground(prepared, options)
+  const controller = new AbortController()
+  this.runControllers.set(prepared.runId, controller)
+  this.enqueueBackground(prepared, { ...options, signal: controller.signal })
   return prepared.initial
  }
 
@@ -191,7 +198,9 @@ export class DogEngine {
   prepared: { compiled: CompiledGraph; runId: string; initial: DogRun },
   options: DogRunOptions,
  ): void {
-  const task = this.executeRun(prepared, { ...options, signal: new AbortController().signal })
+  // options carries the run-level controller's signal (installed by startRun);
+  // it must NOT be replaced here — dog_cancel aborts that exact controller.
+  const task = this.executeRun(prepared, options)
    .then(() => undefined)
    .catch(async cause => {
     try {
@@ -210,6 +219,7 @@ export class DogEngine {
     }
     this.runStops.get(prepared.runId)?.()
     this.runStops.delete(prepared.runId)
+    this.runControllers.delete(prepared.runId)
     this.backgroundTasks.delete(task)
    })
   void task.finally(() => this.backgroundTasks.delete(task))
@@ -259,8 +269,14 @@ export class DogEngine {
 
  /** Cancel one run and stop its heartbeat; partial records remain inspectable. */
  async cancelRun(runId: string, reason: string): Promise<DogRun> {
+  // 1) Abort the run-level signal first: in-flight verifiers stop waiting and
+  //    settle as cancelled instead of continuing their work.
+  this.runControllers.get(runId)?.abort(new Error(reason))
+  this.runControllers.delete(runId)
+  // 2) Stop the heartbeat.
   this.runStops.get(runId)?.()
   this.runStops.delete(runId)
+  // 3) Mark the persisted run.
   const updated = await this.repository.updateRun(runId, current => ({
    ...current,
    state: 'cancelled',
@@ -268,6 +284,8 @@ export class DogEngine {
    runtimeWarning: `cancelled: ${boundedMessage(reason)}`,
    updatedAt: this.now().toISOString(),
   }))
+  // 4) Tell the host to interrupt the run's live verifier subagents.
+  this.onRunCancelled?.(runId)
   return updated
  }
 
@@ -512,6 +530,9 @@ export class DogEngine {
      this.programmatic,
      this.agentic,
     )
+    if (signal.aborted) {
+     return { state: 'cancelled', reason: 'run cancelled; verifier aborted' }
+    }
     const verdict: GoalState = settled.state === 'pass' ? 'success' : settled.state === 'fail' ? 'failure' : 'needs_human'
     const record: VerificationRecord = {
      schemaVersion: '0.1',
@@ -708,19 +729,35 @@ export class DogEngine {
      + 'exceeds revalidateThreshold — confirm unrelated parts were not changed',
    }
   }
-  await this.repository.updateRun(runId, current => ({
-   ...current,
-   state: 'completed',
-   rootState,
-   ...(run.runtimeWarning !== undefined ? { runtimeWarning: run.runtimeWarning } : {}),
-   goals: this.mergeGoalsKeepingHostSessions(goals, current.goals),
-   gmDigests: { ...gmDigests },
-   updatedAt,
-  }))
-  run = { ...run, state: 'completed', rootState, goals: { ...goals }, gmDigests: { ...gmDigests }, updatedAt }
+  if (signal.aborted) {
+   // A cancellation (dog_cancel or host signal) must never be overwritten by
+   // the run's own completion record — keep the cancelled state and let the
+   // abort reason stand.
+   await this.repository.updateRun(runId, current => ({
+    ...current,
+    state: 'cancelled' as const,
+    rootState: 'cancelled' as const,
+    goals: current.goals,
+    updatedAt,
+   }))
+  } else {
+   await this.repository.updateRun(runId, current => ({
+    ...current,
+    state: 'completed',
+    rootState,
+    ...(run.runtimeWarning !== undefined ? { runtimeWarning: run.runtimeWarning } : {}),
+    goals: this.mergeGoalsKeepingHostSessions(goals, current.goals),
+    gmDigests: { ...gmDigests },
+    updatedAt,
+   }))
+  }
+  run = signal.aborted
+   ? { ...run, state: 'cancelled', rootState: 'cancelled', updatedAt }
+   : { ...run, state: 'completed', rootState, goals: { ...goals }, gmDigests: { ...gmDigests }, updatedAt }
   await this.workspaces.releaseAll([...runWorkspaces])
   stopHeartbeat()
   this.runStops.delete(runId)
+  this.runControllers.delete(runId)
   return deepFreeze(run)
  }
 

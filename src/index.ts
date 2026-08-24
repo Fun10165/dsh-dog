@@ -152,6 +152,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
   let dogEngine: DogEngine | undefined
   let agenticRunnerRef: AgenticRunner | undefined
+  let subagentRuntimeRef: SubagentRuntime | undefined
+  // Live verifier subagents keyed by session id — dog_cancel interrupts them.
+  const activeVerifiers = new Map<string, { readonly parent: Agent; readonly runId: string }>()
   const getEngine = (): DogEngine => {
     if (dogEngine === undefined) {
       // settingsCurrent re-reads the live scope: the initial registration may
@@ -168,6 +171,19 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         ...(agenticRunnerRef === undefined ? {} : { agentic: agenticRunnerRef }),
         repository,
         workspaces: new WorkspaceManager({ baseDir: effective.workspaceRoot }),
+        onRunCancelled: runId => {
+          for (const [sessionId, record] of activeVerifiers) {
+            if (record.runId !== runId) continue
+            try {
+              subagentRuntimeRef?.interrupt(
+                sessionId as SessionId,
+                { kind: 'ancestor', agent: record.parent } satisfies SubagentInterruptAuthority,
+              )
+            } catch {
+              // best-effort; the run record is already cancelled
+            }
+          }
+        },
         liveConfig: () => {
           const live = settingsCurrent?.()
           return live === undefined ? {} : { maxConcurrentVerifications: live.maxConcurrentVerifications }
@@ -185,6 +201,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
   ctx.inject(['subagents'], (subagentCtx) => {
     const subagents: SubagentRuntime = subagentCtx.subagents
+    subagentRuntimeRef = subagents
     const agenticRunner: AgenticRunner = async (instruction, workspace, inputPath, env) => {
       const { parent, runId } = env
       const signal = env.signal ?? new AbortController().signal
@@ -205,6 +222,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         signal,
       })
       const sessionId = started.childId
+      activeVerifiers.set(sessionId, { parent, runId: runId ?? '' })
       if (runId !== undefined) {
         try {
           await getEngine().annotateRun(runId, `bind-branch entered for ${goalId}: session ${sessionId.slice(0, 8)}`)
@@ -246,6 +264,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           // dog_wait. drainContinuableChildren releases the Activation/session
           // handle without that notification storm.
           await subagents.drainContinuableChildren(parent, [sessionId])
+          activeVerifiers.delete(sessionId)
           await getEngine().recordVerifierLifecycle(runId, goalId, 'verifier_released', sessionId)
         } catch (releaseError) {
           await getEngine().annotateRun(runId, `verifier release failed for ${goalId}: ${String(releaseError).slice(0, 300)}`)
