@@ -4,13 +4,13 @@ description: 当一个目标是非形式化的、没有唯一判准的"大目标
 license: MIT
 metadata:
   author: dsh-dog
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # DoG(DAG of Goals)使用说明
 
 > DoG = **DAG of Goals**(目标的有向无环图):把一个大目标拆成一棵"目标树",每个小目标可以被单独判定,系统逐项判定后汇总。
-> 本说明对应 **dsh-dog v1.1.0**(协议 schemaVersion `0.9`);协议字段如下文所述,产品版本演进不改协议号。
+> 本说明对应 **dsh-dog v1.2.0**(协议 schemaVersion `0.9`);协议字段如下文所述,产品版本演进不改协议号。
 > **需要完整操作手册(全部工具字段、状态语义、错误诊断、最佳实践)请读 `docs/agent-guide.md`。**
 
 ## 0. 什么时候使用这个 skill(什么时候不用)

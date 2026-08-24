@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.2.0 (2026-08-24) — real parallelism & true cancellation
+
+### dependsOn: completion gate with real-time wakeup
+- A dependency is satisfied once its target reaches **any terminal state**
+  (success/failure/needs_human/cancelled/invalidated/partial/inherited) —
+  not only success. The waiter is released to run its own judgment.
+- **No more dead `blocked` latches**: a leaf with an unfinished dependency
+  stays `pending` and is **re-checked on every pump**; a fast programmatic
+  sibling that settles moments later releases the waiter immediately.
+- Scheduler no longer `break`s the scan when the agentic budget is full —
+  it `continue`s, so programmatic leaves and freshly-released dependents are
+  picked up in the same round instead of waiting for an agentic completion.
+- Regression: released leaf starts **strictly before** its running siblings
+  finish (test that reddens under the old batching scheduler).
+
+### Composites run concurrently — never a serial for loop
+- Mutually independent composites now run their whole-object assertions
+  **concurrently** (watermark under the **same** agentic budget as leaves,
+  `inFlightAgentic` shared), instead of one at a time in postorder.
+- Regression: two independent groups — group B's assertion must start while
+  group A's assertion is still running (serial implementation fails).
+
+### `dog_cancel` now truly cancels
+- Run-level `AbortController` is actually propagated to `executeRun` (was
+  being replaced by a fresh never-aborted signal inside `enqueueBackground`).
+- In-flight verifiers settle `cancelled` instead of completing their work;
+  the stale **completion record can no longer overwrite a cancellation**.
+- Host hook interrupts the run's live verifier subagents (`onRunCancelled`).
+- Regression: cancel mid-run → record stays `cancelled`, leaf ends
+  `cancelled`, never flips back to `completed`.
+
+### UI truthfulness
+- A composite's `running` state is persisted when its whole-object assertion
+  starts — the panel no longer shows a stuck `pending` during a long review.
+
+### Tests
+- 41 engine/plugin tests (added: dependency wakeup order, composite
+  concurrency, cancel-aborts-in-flight).
+
 ## v1.1.0 (2026-08-24) — work-anywhere + inspectability
 
 ### Capture roots follow where you work
