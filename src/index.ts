@@ -233,6 +233,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         900_000,
         async () => verifierChildTurnEnded(ctx, sessionId),
       )
+      if (settlement.source !== undefined && runId !== undefined) {
+        // The verifier workspace is reclaimed at run teardown; keep the
+        // verbatim judgment on disk so 'what happened' stays inspectable.
+        void repository.saveSettlement(runId, goalId, settlement.source).catch(() => undefined)
+      }
       if (runId !== undefined && parent !== undefined && parentSessionId.length > 0) {
         try {
           // Quiet release: interrupting a finished-but-not-yet-released child

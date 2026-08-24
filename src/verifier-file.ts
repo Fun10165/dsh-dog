@@ -7,6 +7,8 @@ export interface SettlementFileSummary {
  readonly state: 'pass' | 'fail' | 'inconclusive'
  readonly observation: Record<string, JsonValue>
  readonly waitedMs: number
+ /** The verbatim settlement text (present only when the file was readable). */
+ readonly source?: string
 }
 
 /**
@@ -23,8 +25,8 @@ export async function waitForSettlement(
  while (Date.now() - startAt < timeoutMs) {
   if (signal.aborted) return { state: 'inconclusive', observation: { outcome: 'aborted' }, waitedMs: Date.now() - startAt }
   try {
-   const parsed = parseSettlementFile(await readFile(resultPath, 'utf8'))
-   return { ...parsed, waitedMs: Date.now() - startAt }
+   const source = await readFile(resultPath, 'utf8')
+   return { ...parseSettlementFile(source), source, waitedMs: Date.now() - startAt }
   } catch (error) {
    if (isMissing(error)) {
     await sleep(500)
@@ -52,7 +54,8 @@ export async function waitForSettlementFlexible(
  while (Date.now() - startAt < timeoutMs) {
   if (signal.aborted) return { state: 'inconclusive', observation: { outcome: 'aborted' }, waitedMs: Date.now() - startAt }
   try {
-   return { ...parseSettlementFile(await readFile(resultPath, 'utf8')), waitedMs: Date.now() - startAt }
+   const source = await readFile(resultPath, 'utf8')
+   return { ...parseSettlementFile(source), source, waitedMs: Date.now() - startAt }
   } catch (error) {
    if (!isMissing(error)) {
     return { state: 'inconclusive', observation: { outcome: 'unreadable settlement file' }, waitedMs: Date.now() - startAt }
@@ -63,7 +66,8 @@ export async function waitForSettlementFlexible(
     // generous last-write window before settling inconclusive.
     await sleep(15_000)
     try {
-     return { ...parseSettlementFile(await readFile(resultPath, 'utf8')), waitedMs: Date.now() - startAt }
+     const source = await readFile(resultPath, 'utf8')
+     return { ...parseSettlementFile(source), source, waitedMs: Date.now() - startAt }
     } catch {
      return { state: 'inconclusive', observation: { outcome: 'verifier child finished without writing the settlement file' }, waitedMs: Date.now() - startAt }
     }

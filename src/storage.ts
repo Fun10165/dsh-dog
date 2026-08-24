@@ -237,10 +237,22 @@ export class DogRepository {
    if (isMissing(error)) return []
    throw error
   }
+
   const complete = source.endsWith('\n') ? source : source.slice(0, source.lastIndexOf('\n') + 1)
   return complete.split('\n')
    .filter(line => line.length > 0)
    .map((line, index) => parseRuntimeEvent(JSON.parse(line) as unknown, runId, goalId, index))
+ }
+
+ /** Persist the verbatim verifier settlement text (survives workspace cleanup). */
+ async saveSettlement(runId: string, goalId: string, content: string): Promise<void> {
+  await this.initialize()
+  await atomicWriteJson(join(this.rootPath, 'settlements', `${safeKey(runId)}-${safeKey(goalId)}.json`), {
+   runId,
+   goalId,
+   savedAt: new Date().toISOString(),
+   content,
+  })
  }
 
  /** Store captured input bytes and its metadata manifest under content identity. */

@@ -215,6 +215,22 @@ describe('v0.9 engine', () => {
     expect(second.goals.root?.reason).toBe('required non-tolerable child leaf failed')
   })
 
+  it('records the whole-object assertion verdict and evidence on the composite result', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root, { agentic: stubAgentic('fail') })
+    const compiled = await dog.create(graph({
+      root: compositeNode({ op: 'ref', id: 'leaf' }, {
+        verifier: { mode: 'agentic', instruction: 'whole-object' },
+      }),
+      leaf: leafNode({}), // programmatic, passes — so the assertion actually runs
+    }, [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }]))
+    const run = await dog.run(compiled.input.id)
+    expect(run.goals.root?.state).toBe('failure')
+    expect(run.goals.root?.verification?.passed).toBe(false)
+    expect(run.goals.root?.verification?.evidence).toEqual({ stubbed: true, verdict: 'fail' })
+  })
+
   it('gates a dependent leaf behind a failed source', async () => {
     const root = await tmpRoot()
     await writeFile(join(root, 'artifact.txt'), 'verified')

@@ -659,6 +659,23 @@ export class DogEngine {
        verifier: { mode: wholePlan.verifier.mode },
       })
       result = mergeWholeAssertion(result, settled)
+      // Carry the whole-object verdict (and its rationale) on the composite
+      // goal result itself, so dog_status surfaces the evidence — previously
+      // the merged failure carried only a reason and the rationale was lost.
+      const record: VerificationRecord = {
+       schemaVersion: '0.1',
+       goalId,
+       runId,
+       graphId: compiled.input.id,
+       graphDigest: compiled.graphDigest,
+       judgment: wholePlan.judgment,
+       ...(wholePlan.gmDigest === undefined ? {} : { gmDigest: wholePlan.gmDigest }),
+       passed: settled.state === 'pass' ? true : settled.state === 'fail' ? false : null,
+       ...(settled.evidence === undefined ? {} : { evidence: settled.evidence }),
+       at: this.now().toISOString(),
+      }
+      await this.repository.appendVerification(record)
+      result = { ...result, verification: record }
      } catch (error) {
       result = { state: 'failure', reason: `whole-object assertion failed: ${boundedMessage(messageOf(error))}` }
      }
