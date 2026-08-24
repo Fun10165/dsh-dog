@@ -65,6 +65,16 @@ full end-to-end hardening pass against live web/headless runs. Protocol
   inherited-failure propagation, skipped assertions on failed subtrees,
   inheritance from cancelled prior runs, and settlement protocol.
 
+### Known limitation (honest disclosure)
+- Agentic leaves are **single-shot**: one isolated verifier per judgment, no
+  re-check or voting against single-judge blind spots (the v0.2-deferred
+  calibration item remains unimplemented). Removing the evidence schema also
+  removed structural comparability, so "reproducible" holds strictly for
+  programmatic kernels; agentic verdicts are anchored (object + instruction
+  hash) but not model-stable. Use programmatic kernels for deterministic
+  gates and treat agentic verdicts as evidence plus (high-stakes → human
+  confirmation is in the loop via `needs_human`).
+
 The judgment-model statement (two kernels; no registry, no parameter
 allow-lists, no evidence schema ids) is carried from v0.9; see
 [docs/architecture-0.9.md](docs/architecture-0.9.md).

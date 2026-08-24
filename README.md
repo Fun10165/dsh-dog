@@ -19,12 +19,20 @@ A goal like "write a genuinely good article" has **no single, formal pass/fail r
    - Composites combine children (`all` / `any` / `atLeast` / `not`) and may carry their **own whole-object assertion** — "each dimension passed, but as a whole article it still doesn't hold together" — judged after the subtree settles; the assertion can only *demote*, never promote.
    - Failures propagate upwards until a node that tolerates them (`fatal` / `tolerable` / `degrade`); a `fatal` reaches the root, and **the root is never allowed to fail silently** — it surfaces to a human with the exact failing subgoal and its evidence.
    - Anything the verifier cannot decide honestly settles `needs_human` (never guessed).
-4. **Every verdict is evidence-bound and reproducible.**
+4. **Every verdict is evidence-bound; reproducibility is kernel-specific.**
    - `dog_create` captures immutable, content-addressed copies of the target (files; directories are packed into `.tar`), so verification runs against the exact bytes reviewed — not the later live file.
+   - Each verdict records the judgment anchor (object digest + instruction hash / script identity), the `verdict`, and its evidence — so *what was decided, and on what basis* is always reconstructable.
+   - **Programmatic kernels are deterministic** (same script + same bytes → same verdict). **Agentic kernels are independent judgments, not formulas**: the same instruction against the same object *may* differ across model versions/temperatures. For reproducibility-critical checks use the programmatic kernel, or treat the agentic verdict as advisory and (for high-stakes goals) keep `needs_human`/human review in the loop. DoG *anchors* the judgment — it does not promise model stability.
    - Re-running an unchanged graph (object + judgment anchor identical) reuses prior settlements (`inherited`), so iterations cost tokens only for what actually changed.
 5. **True parallelism, real isolation.** Watermark scheduling (a finished verifier immediately frees its slot), programmatic leaves run unqueued, the agentic budget bounds only model-backed work, and each verifier works in its own isolated workspace that stays alive until the run settles.
 
 **What DoG is not**: a todo list, a CI runner, or a checklist of scripted rules. It is the *judgment* layer — the part of "is this done?" that previously had no structure and therefore got done (or skipped) by vibes.
+
+### Known limits (v1.0)
+
+- **Agentic judgments are single-shot** — one isolated verifier subagent per leaf, no re-check, no voting. The evidence schema was deliberately removed in favor of "any JSON", which also removed the basis for structural comparison; the v0.2-deferred "re-check/voting against single-judge blind spots" is **not implemented**.
+- **Inheritance anchors, it does not re-verify**: an unchanged agentic leaf reuses its previous verdict — drift in model behavior is invisible until the anchor changes.
+- **Where it lands**: anything that must be *deterministically* reproducible belongs in a programmatic script; anything *judgment-based* is best reviewed as evidence plus, for high-stakes goals, human confirmation.
 
 ---
 
