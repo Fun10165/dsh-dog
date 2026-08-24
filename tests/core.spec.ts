@@ -248,6 +248,59 @@ describe('v0.9 engine', () => {
     // asserting the source failure propagates is the observable contract here.
   })
 
+  it('releases a leaf waiting on a fast programmatic sibling once it completes (completion gate, not a success gate)', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root, { agentic: stubAgentic('pass') })
+    const compiled = await dog.create({
+      schemaVersion: '0.9',
+      id: 'dep-complete',
+      root: 'root',
+      nodes: {
+        root: compositeNode({ op: 'all', items: [{ op: 'ref', id: 'fast' }, { op: 'ref', id: 'slow' }] }),
+        fast: leafNode({ title: 'fast' }), // programmatic, resolves immediately
+        slow: leafNode({ title: 'slow', verifier: { mode: 'agentic', instruction: 'anything' } }),
+      },
+      contains: [
+        { parent: 'root', child: 'fast', required: true, failure: 'fatal' },
+        { parent: 'root', child: 'slow', required: true, failure: 'fatal' },
+      ],
+      dependsOn: [{ source: 'slow', target: 'fast' }],
+    })
+    const run = await dog.run(compiled.input.id)
+    // The slow leaf is released after fast completes — it must NOT be dead-blocked.
+    expect(run.goals.slow?.state).toBe('success')
+    expect(run.goals.slow?.reason).toBeUndefined()
+    expect(run.rootState).toBe('success')
+  })
+
+  it('releases a dependent leaf even when its dependency failed (terminal state, any verdict)', async () => {
+    const root = await tmpRoot()
+    await writeFile(join(root, 'artifact.txt'), 'verified')
+    const dog = engine(root, { agentic: stubAgentic('fail') })
+    const compiled = await dog.create({
+      schemaVersion: '0.9',
+      id: 'dep-failed-target',
+      root: 'root',
+      nodes: {
+        root: compositeNode({ op: 'all', items: [{ op: 'ref', id: 'bad' }, { op: 'ref', id: 'waiter' }] }),
+        bad: leafNode({ title: 'bad', verifier: { mode: 'agentic', instruction: 'anything' } }),
+        waiter: leafNode({ title: 'waiter', verifier: { mode: 'agentic', instruction: 'anything' } }),
+      },
+      contains: [
+        { parent: 'root', child: 'bad', required: true, failure: 'fatal' },
+        { parent: 'root', child: 'waiter', required: true, failure: 'fatal' },
+      ],
+      dependsOn: [{ source: 'waiter', target: 'bad' }],
+    })
+    const run = await dog.run(compiled.input.id)
+    expect(run.goals.bad?.state).toBe('failure')
+    // The waiter still runs its own judgment (also fail here) — never a dead block.
+    expect(run.goals.waiter?.state).toBe('failure')
+    expect(run.goals.waiter?.reason).toBeUndefined()
+    expect(run.rootState).toBe('failure')
+  })
+
   it('runs programmatic leaves without queuing behind the agentic concurrency budget', async () => {
     const root = await tmpRoot()
     await writeFile(join(root, 'artifact.txt'), 'verified')

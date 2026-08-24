@@ -571,18 +571,14 @@ export class DogEngine {
    inFlightAgentic.clear()
   }
   const pump = async (): Promise<void> => {
-   // Ready = no unresolved dependency target.
+   // Ready = every dependency target has reached a terminal state. A target
+   // that is still running/pending leaves this goal pending — it is re-checked
+   // on every pump, so a fast programmatic sibling that settles a moment later
+   // releases the waiter instead of latching it into a dead `blocked`.
    for (const goalId of [...pendingLeaves]) {
     const plan = planFor(goalId)
-    const blockedDependency = (dependencies.get(goalId) ?? []).find(target => !succeededState(goals[target]))
-    if (blockedDependency !== undefined) {
-     const reason = `dependency ${blockedDependency} did not succeed`
-     const state = dependencyNeedsHuman(goals[blockedDependency]) ? 'needs_human' : 'blocked'
-     goals[goalId] = { state, reason }
-     pendingLeaves.delete(goalId)
-     await appendRuntimeEvent(goalId, 'dependency_blocked', { state, reason })
-     continue
-    }
+    const waitingOn = (dependencies.get(goalId) ?? []).find(target => !dependencyComplete(goals[target]))
+    if (waitingOn !== undefined) continue
     // The concurrency budget bounds model-backed (agentic) verifiers only:
     // programmatic scripts are cheap, deterministic, and must run as soon as
     // their dependencies are satisfied instead of queuing behind agentics.
@@ -622,11 +618,11 @@ export class DogEngine {
   for (const goalId of postorder(compiled.input)) {
    const node = compiled.input.nodes[goalId]
    if (node === undefined || node.kind !== 'composite') continue
-   const blockedDependency = (dependencies.get(goalId) ?? []).find(target => !succeededState(goals[target]))
+   const blockedDependency = (dependencies.get(goalId) ?? []).find(target => !dependencyComplete(goals[target]))
    let result: GoalResult
    if (blockedDependency !== undefined) {
     const state = dependencyNeedsHuman(goals[blockedDependency]) ? 'needs_human' : 'blocked'
-    result = { state, reason: `dependency ${blockedDependency} did not succeed` }
+    result = { state, reason: `waiting for dependency ${blockedDependency} to complete` }
     await appendRuntimeEvent(goalId, 'dependency_blocked', { state, reason: result.reason ?? '' })
    } else {
     const startedAt = this.now().toISOString()
@@ -1035,8 +1031,19 @@ function dependencyNeedsHuman(result: GoalResult | undefined): boolean {
   || result?.state === 'inherited' && result.verification?.passed === null
 }
 
-function succeededState(result: GoalResult | undefined): boolean {
- return result?.state === 'success' || result?.state === 'inherited' && result.verification?.passed === true
+/**
+ * A dependency is satisfied for scheduling once its target has reached a
+ * terminal state — success, failure, needs_human, cancelled, invalidated,
+ * partial, or an inherited verdict. This is a *completion* gate, not a
+ * success gate: the waiter is released to run its own judgment even when the
+ * dependency failed (its verdict is independent evidence).
+ */
+function dependencyComplete(result: GoalResult | undefined): boolean {
+ const state = result?.state
+ if (state === 'success' || state === 'failure' || state === 'needs_human'
+  || state === 'cancelled' || state === 'invalidated' || state === 'partial'
+  || state === 'inherited') return true
+ return false
 }
 
 function terminalState(rootResult: GoalResult | undefined, allowPartialRoot: boolean): RootTerminalState {
