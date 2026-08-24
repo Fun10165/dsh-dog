@@ -320,6 +320,7 @@ dsh plugin --profile web --dump-config | grep dsh-dog   # 确认插件已装配(
 | `runtime-events/<hash>-<hash>.jsonl` | 每个 goal 事件流(goal_started/verifier_started/…/goal_settled,含 attempt/at) | `sha256Json(runId)-sha256Json(goalId)` |
 | `graphs/<graphDigest>.json` | 编译后图 + `acceptancePlans`(判据锚:instructionHash/scriptDigest,input.digest) | 从 run 的 `graphDigest` |
 | `artifacts/sha256_<digest>.bin/.json` | 捕获对象字节 + 清单(path/digest/byteLength) | 从 plan.input.digest |
+| `settlements/<hash>-<hash>.json` | **verifier 结算文件原文**(合成系 `content`,存活期永不再被工作区清理删除) | `sha256Json(runId)-sha256Json(goalId)`;用于回看"当时判了什么/怎么建议的" |
 | `graph-index/<hash>.json` / `locks/` | id→digest 索引 / 跨进程文件锁 | 一般不用动 |
 
 ### 8.2 定位算法(`sha256Json`)
