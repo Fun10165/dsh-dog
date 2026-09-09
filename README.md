@@ -2,11 +2,13 @@
 
 **DAG of Goals (DoG)** — turn a *non-formal* goal ("make a high-quality deck", "write a truly good article") into a DAG of independently verifiable subgoals, and let each subgoal be judged by its **own isolated verifier** before anything counts as done.
 
-> Protocol `schemaVersion` `0.9` · product **v1.2.0 stable** · [Changelog](docs/CHANGELOG.md) · [Spec](SPEC.md) · [Architecture 0.9](docs/architecture-0.9.md)
+> Protocol `schemaVersion` `0.9` · product **v1.3.0-alpha.1** (DSH `0.1.5-alpha.1`) · [Changelog](docs/CHANGELOG.md) · [Spec](SPEC.md) · [Architecture 0.9](docs/architecture-0.9.md)
 
 > **v1.1**: capture roots follow the invoking session cwd (configured `workspaceRoot` is the fallback); verifier/programmatic timeouts 15 min; agentic concurrency reads live settings per-run (no restart); whole-object assertions record their verdict + evidence on the composite; verifier settlement text is preserved in `~/.dsh/dog/settlements/`.
 
 > **v1.2**: dependsOn is a completion gate with real-time wakeup (no dead `blocked` latches); composites run their whole-object assertions concurrently (watermark under the shared agentic budget) instead of a serial loop; `dog_cancel` truly aborts — run-level signal, in-flight verifiers settle `cancelled`, live subagents are interrupted, and a cancellation is never overwritten by a completion record; composite `running` state persists so the UI stays truthful; 41 tests.
+
+> **v1.3**: ported to the DSH **alpha** platform line (`0.1.5-alpha.1`) and re-layered — `src/core/` is now Harness-free, `src/dsh/` is the only DSH-facing layer, `src/shared/` holds zero-dependency wire constants. Service access moved to the upper-layer alpha contracts (`ctx.settings.installSection`, `ctx.sessions.snapshotEvents()`, `ctx.connection.fetch`, `ctx.uiSession.pendingInteractions`); the debugger transport is two exact Fetch routes on the shared `/api` carrier (the platform's logical-RPC prefix registry is unusable from an external plugin on this release).
 
 ---
 
@@ -104,7 +106,10 @@ cp docs/skills/dog-v02-agentic-ci/SKILL.md ~/.dsh/skills/dog-v02-agentic-ci/SKIL
 
 ## Repository layout
 
-- [`src/`](src) — plugin: `graph.ts` (schema/validation), `core.ts` (engine: capture, scheduling, propagation, inheritance), `verifiers.ts` (two kernels), `storage.ts` (content-addressed store), `debug.ts` + `client/` (debugger UI), `tools.ts` (model-facing tools).
+- [`src/core/`](src/core) — **Harness-free domain**: `graph.ts` (schema/validation), `engine.ts` (capture, scheduling, propagation, inheritance), `verifiers.ts` (two kernels), `storage.ts` (content-addressed store), `debug.ts` (read-only projections), `workspace.ts`, `lockfile.ts`, `logic.ts`, `model.ts`, `schema.ts`, `json.ts`, `verifier-file.ts`.
+- [`src/dsh/`](src/dsh) — **the only DSH-facing layer**: `plugin.ts` (Cordis entry, config, service wiring), `settings.ts` (`dog` namespace), `tools.ts` (model-facing tools), `agentic.ts` (verifier subagents), `telemetry.ts` (interrupted-turn capture), `debug.ts` (Fetch routes).
+- [`src/client/`](src/client) — browser half: overlay debugger (`DogDebugger.tsx`), snapshot parsing, graph layout, styles, session navigation.
+- [`src/shared/`](src/shared) — zero-dependency constants both halves agree on (`protocol.ts`).
 - [`schemas/`](schemas/schema-0.2) — JSON schemas (graph/run/verification/runtime-event/report).
 - [`docs/`](docs) — `architecture-0.9.md` (normative 0.9 design), `CHANGELOG.md`, `skills/`.
 - [`examples/`](examples/README.md) — copy-paste demo graphs.

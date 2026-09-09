@@ -1,5 +1,63 @@
 # Changelog
 
+## v1.3.0-alpha.1 (2026-09-09) — DSH alpha platform port + layered refactor
+
+Targets the DSH **alpha** line (`@deepseek-ai/dsh@0.1.5-alpha.1`) and splits the
+codebase into layers so future platform bumps touch one directory.
+
+### Layout
+- `src/core/` is now **Harness-free** (no `@deepseek-ai/*` import at all):
+  engine, graph, logic, model, schema, storage, workspace, lockfile, verifiers,
+  verifier-file, and the read-only debug projections. It can be tested without
+  a DSH process.
+- `src/dsh/` is the **only DSH-facing layer**: Cordis entry + config,
+  `dog` settings section, model-facing tools, verifier-subagent runner,
+  interrupted-turn capture, and the browser transport.
+- `src/shared/` holds the zero-dependency wire constants both halves import.
+- `src/client/` keeps the browser half, now importing only client-safe packages.
+
+### Platform adaptation (upper-layer contracts)
+- **Settings**: `installSettingsSection`/`settingsNamespace` are gone in alpha;
+  the plugin registers through the service — `ctx.settings.installSection(...)`
+  inside `ctx.inject(['settings'], …)`. One schema now feeds both the composition
+  entry and the user section (previously duplicated).
+- **Sessions**: `Session.events` is gone; reads go through
+  `session.snapshotEvents()`. Session cwd/lineage come from
+  `ctx.sessions.get(id).header`, never from a live `Agent` (alpha's public
+  `Agent` is just `{ id }`).
+- **Client**: `@deepseek-ai/dsh-client-runtime` no longer exists. The browser
+  half uses `@deepseek-ai/dsh-api-session-controller/client` (`ctx.sessions`),
+  `@deepseek-ai/dsh-client-ui-renderer/client` (`ctx.slots`), and
+  `@deepseek-ai/dsh-client-ui-session/client`
+  (`ctx.uiSession.pendingInteractions` for the "Needs input" badge — the alpha
+  replacement for `SessionSummary.pendingInteraction`).
+- **Debugger transport**: the Connection logical-RPC prefix registry
+  (`ctx.connection.rpc.handle`) resolves `webServer` from the Connection
+  plugin's own fiber and therefore throws for every external caller on this
+  release. The debugger now registers two **exact Fetch routes** on the shared
+  `/api` carrier (`ctx.connection.fetch.register`) — the platform's documented
+  path for non-Remote transports — so the carrier keeps owning the Host/Origin
+  fence and browser authentication.
+- Dependencies: peers/dev pinned to `0.1.5-alpha.1`; `cordis` `^4.0.2`;
+  `dsh-client-runtime` and `dsh-host-webserver` dropped.
+
+### Fixes found by the port
+- `schemas/schema-0.2` is resolved by walking up from the module, so the same
+  code works from `src/core/` (tests) and `bundled lib/` (installed package)
+  instead of a depth-sensitive relative path.
+- `schemas/` is now listed in `files` (the published package previously omitted
+  the schemas it loads at runtime).
+- `DogRepository` and the settings/schema helpers are exported from the package
+  entry for programmatic users.
+
+### Verification
+- `pnpm run check` (typecheck + 41 tests + build) green.
+- Real-host smoke on `dsh@0.1.5-alpha.1`: profile composition resolves the
+  plugin, the alpha web app serves the client bundle (overlay renders, no
+  console errors), `POST /api/dog/snapshot` returns the snapshot JSON, and a
+  headless run really called `dog_validate` (tool/call + tool/result in the
+  session log).
+
 ## v1.2.0 (2026-08-24) — real parallelism & true cancellation
 
 ### dependsOn: completion gate with real-time wakeup

@@ -9,8 +9,9 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react'
-import type { SessionListState } from '@deepseek-ai/dsh-client-runtime/client'
-import type { DogDebugGraphRevision, DogDebugSnapshot } from '../debug.ts'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionPendingInteractionSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
+import type { DogDebugGraphRevision, DogDebugSnapshot } from '../core/debug.ts'
 import type {
   BoolExpr,
   CompiledGraph,
@@ -23,7 +24,7 @@ import type {
   GoalState,
   JsonValue,
   RootTerminalState,
-} from '../model.ts'
+} from '../core/model.ts'
 import {
   agentParentSessionIds,
   goalAgentRefs,
@@ -48,6 +49,8 @@ export interface DogDebuggerProps {
   readonly openSession: (sessionId: string, parentSessionId?: string) => Promise<boolean>
   readonly getSessionState: () => SessionListState
   readonly subscribeSessions: (listener: () => void) => () => void
+  readonly getPendingInteractions: () => SessionPendingInteractionSnapshot
+  readonly subscribePendingInteractions: (listener: () => void) => () => void
   readonly refreshAgentCatalog: (parentSessionId: string) => Promise<void>
 }
 
@@ -57,6 +60,8 @@ export function DogDebugger({
   openSession,
   getSessionState,
   subscribeSessions,
+  getPendingInteractions,
+  subscribePendingInteractions,
   refreshAgentCatalog,
 }: DogDebuggerProps): JSX.Element {
   const [open, setOpen] = useState(false)
@@ -72,6 +77,7 @@ export function DogDebugger({
   const dialogRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
   const sessionState = useSyncExternalStore(subscribeSessions, getSessionState, getSessionState)
+  const pendingState = useSyncExternalStore(subscribePendingInteractions, getPendingInteractions, getPendingInteractions)
   const updateDockCollapsed = useCallback((collapsed: boolean): void => {
     setDockCollapsed(collapsed)
     writeDogDockCollapsed(collapsed)
@@ -252,6 +258,7 @@ export function DogDebugger({
                       graph={selectedRevision.graph}
                       run={selectedRun}
                       sessions={sessionState}
+                      pending={pendingState}
                       selectedNodeId={effectiveNodeId}
                       zoom={zoom}
                       onSelectNode={setSelectedNodeId}
@@ -511,13 +518,14 @@ interface GraphCanvasProps {
   readonly graph: CompiledGraph
   readonly run: DogRun | undefined
   readonly sessions: SessionListState
+  readonly pending: SessionPendingInteractionSnapshot
   readonly selectedNodeId: string | undefined
   readonly zoom: number
   readonly onSelectNode: (id: string) => void
   readonly openSession: DogDebuggerProps['openSession']
 }
 
-function GraphCanvas({ graph, run, sessions, selectedNodeId, zoom, onSelectNode, openSession }: GraphCanvasProps): JSX.Element {
+function GraphCanvas({ graph, run, sessions, pending, selectedNodeId, zoom, onSelectNode, openSession }: GraphCanvasProps): JSX.Element {
   const layout = useMemo(() => layoutDag(graph.input), [graph])
   const [expandedAgentNodeId, setExpandedAgentNodeId] = useState<string>()
   const scaledWidth = layout.width * zoom
@@ -595,6 +603,7 @@ function GraphCanvas({ graph, run, sessions, selectedNodeId, zoom, onSelectNode,
                     goalTitle={node.title}
                     refs={agents}
                     sessions={sessions}
+                    pending={pending}
                     style={agentFlyoutStyle(position, layout.width, layout.height)}
                     onClose={() => setExpandedAgentNodeId(undefined)}
                     openSession={openSession}
@@ -613,15 +622,16 @@ interface AgentFlyoutProps {
   readonly goalTitle: string
   readonly refs: readonly GoalAgentSessionRef[]
   readonly sessions: SessionListState
+  readonly pending: SessionPendingInteractionSnapshot
   readonly style: CSSProperties
   readonly onClose: () => void
   readonly openSession: DogDebuggerProps['openSession']
 }
 
-function AgentFlyout({ goalTitle, refs, sessions, style, onClose, openSession }: AgentFlyoutProps): JSX.Element {
+function AgentFlyout({ goalTitle, refs, sessions, pending, style, onClose, openSession }: AgentFlyoutProps): JSX.Element {
   const [openingSession, setOpeningSession] = useState<string>()
   const [error, setError] = useState<string>()
-  const agents = refs.map(ref => goalAgentTelemetry(ref, sessions))
+  const agents = refs.map(ref => goalAgentTelemetry(ref, sessions, pending))
   const open = async (ref: GoalAgentSessionRef): Promise<void> => {
     setOpeningSession(ref.sessionId)
     setError(undefined)

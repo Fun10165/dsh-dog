@@ -1,7 +1,8 @@
-import type { SessionListState } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { describe, expect, it } from 'vitest'
-import type { DogDebugSnapshot } from '../src/debug.ts'
-import type { DogRun, GoalAgentSessionRef } from '../src/model.ts'
+import type { DogDebugSnapshot } from '../src/dsh/debug.ts'
+import type { DogRun, GoalAgentSessionRef } from '../src/core/model.ts'
 import {
   agentParentSessionIds,
   goalAgentRefs,
@@ -88,7 +89,7 @@ describe('Agent telemetry projection', () => {
       ['missing-child', 'verifier'],
     ])
 
-    const live = goalAgentTelemetry(goalAgentRefs(current, 'leaf')[0]!, state, 20_000)
+    const live = goalAgentTelemetry(goalAgentRefs(current, 'leaf')[0]!, state, new Map(), 20_000)
     expect(live).toMatchObject({
       label: 'Layout Agent',
       available: true,
@@ -98,14 +99,23 @@ describe('Agent telemetry projection', () => {
       durationMs: 13_000,
     })
 
-    const missing = goalAgentTelemetry(goalAgentRefs(current, 'leaf')[1]!, state, 20_000)
+    const missing = goalAgentTelemetry(goalAgentRefs(current, 'leaf')[1]!, state, new Map(), 20_000)
     expect(missing).toMatchObject({
       label: 'Verifier Agent',
       available: false,
       running: false,
     })
 
-    expect(summarizeRunAgents(current, state, 20_000)).toEqual({
+    // A session-scoped pending interaction marks the bound Agent as needing input.
+    const waiting = goalAgentTelemetry(
+      goalAgentRefs(current, 'leaf')[0]!,
+      state,
+      new Map([['child-a' as SessionId, { key: 'q1', kind: 'question', sessionId: 'child-a' as SessionId }]]),
+      20_000,
+    )
+    expect(waiting.needsInput).toBe(true)
+
+    expect(summarizeRunAgents(current, state, new Map(), 20_000)).toEqual({
       linked: 3,
       visible: 2,
       running: 1,

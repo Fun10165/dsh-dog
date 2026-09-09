@@ -3,7 +3,7 @@
 import { mkdtemp, mkdir, writeFile, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { DogConfig, DogGraphInput, GoalNodeInput, VerifierShape } from '../src/model.ts'
+import type { DogConfig, DogGraphInput, GoalNodeInput, VerifierShape } from '../src/core/model.ts'
 
 export interface EngineFixture {
   root: string
@@ -79,11 +79,11 @@ export function graph(
 }
 
 /** Fake programmatic kernel: succeeds without executing a real script. */
-export function stubProgrammatic(): (script: string, inputPath: string, env?: import('../src/verifiers.ts').VerifierExecutionEnv) => Promise<import('../src/verifiers.ts').Verdict> {
+export function stubProgrammatic(): (script: string, inputPath: string, env?: import('../src/core/verifiers.ts').VerifierExecutionEnv) => Promise<import('../src/core/verifiers.ts').Verdict> {
   return async () => ({ state: 'pass', evidence: { stubbed: true } })
 }
 
 /** Fake agentic kernel: returns a fixed verdict. */
-export function stubAgentic(verdict: 'pass' | 'fail' | 'inconclusive' = 'pass'): (instruction: string, workspace?: import('../src/verifiers.ts').IsolatedWorkspace, inputPath?: string, env?: import('../src/verifiers.ts').VerifierExecutionEnv) => Promise<import('../src/verifiers.ts').Verdict> {
+export function stubAgentic(verdict: 'pass' | 'fail' | 'inconclusive' = 'pass'): (instruction: string, workspace?: import('../src/core/verifiers.ts').IsolatedWorkspace, inputPath?: string, env?: import('../src/core/verifiers.ts').VerifierExecutionEnv) => Promise<import('../src/core/verifiers.ts').Verdict> {
   return async () => ({ state: verdict, evidence: { stubbed: true, verdict } })
 }

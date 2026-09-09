@@ -3,7 +3,7 @@ import type { UserConfig } from 'tsdown'
 const node: UserConfig = {
   entry: {
     index: 'src/index.ts',
-    core: 'src/core.ts',
+    core: 'src/core/engine.ts',
   },
   outDir: 'lib',
   format: ['esm'],
@@ -15,7 +15,13 @@ const node: UserConfig = {
   deps: {
     neverBundle: [
       '@deepseek-ai/cordis',
+      '@deepseek-ai/dsh-agent',
+      '@deepseek-ai/dsh-client-connection',
       '@deepseek-ai/dsh-home-paths',
+      '@deepseek-ai/dsh-jobs',
+      '@deepseek-ai/dsh-session',
+      '@deepseek-ai/dsh-settings',
+      '@deepseek-ai/dsh-subagent',
       '@deepseek-ai/dsh-tools',
       '@deepseek-ai/schemastery',
     ],

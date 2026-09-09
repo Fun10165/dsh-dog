@@ -1,8 +1,8 @@
 import { writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, it, expect, afterEach } from 'vitest'
-import { DogEngine } from '../src/core.ts'
-import { DogRepository } from '../src/storage.ts'
+import { DogEngine } from '../src/core/engine.ts'
+import { DogRepository } from '../src/core/storage.ts'
 import { compositeNode, ensureScripts, leafNode, mkConfig, stubProgrammatic, temporaryRoot } from './helpers.ts'
 
 const roots: string[] = []

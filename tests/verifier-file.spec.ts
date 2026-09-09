@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { parseSettlementFile, waitForSettlement } from '../src/verifier-file.ts'
+import { parseSettlementFile, waitForSettlement } from '../src/core/verifier-file.ts'
 
 const temporaryRoots: string[] = []
 

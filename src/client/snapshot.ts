@@ -1,7 +1,7 @@
 /** Runtime validation for trusted debugger RPC responses. */
 
-import { parseGraph } from '../graph.ts'
-import { isJsonValue } from '../model.ts'
+import { parseGraph } from '../core/graph.ts'
+import { isJsonValue } from '../core/model.ts'
 import type {
   AcceptancePlan,
   DogRun,
@@ -16,8 +16,8 @@ import type {
   RunInvocationContext,
   CapturedInput,
   VerificationRecord,
-} from '../model.ts'
-import type { DogDebugGraphRevision, DogDebugSnapshot } from '../debug.ts'
+} from '../core/model.ts'
+import type { DogDebugGraphRevision, DogDebugSnapshot } from '../dsh/debug.ts'
 
 const DIGEST = /^[a-f0-9]{64}$/u
 const GOAL_STATES = new Set<GoalState>([

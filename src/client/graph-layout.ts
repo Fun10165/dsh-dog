@@ -1,6 +1,6 @@
 /** Deterministic browser-side layout for containment and dependency edges. */
 
-import type { DogGraphInput } from '../model.ts'
+import type { DogGraphInput } from '../core/model.ts'
 
 export const GOAL_WIDTH = 218
 export const GOAL_HEIGHT = 88

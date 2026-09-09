@@ -1,14 +1,20 @@
 # Mount DoG in a DSH profile. Artifact bindings are intentionally supplied
-# by the profile owner, never by a model-authored graph.
+# by the profile owner, never by a model-authored graph. Every key below is
+# optional: the plugin schema carries the same defaults.
 - insert:
     - id: dsh-dog
       name: '@dsh-external/dsh-dog'
       config:
-        artifactRoots: []
-        artifactBindings: []
         storageDirectory: dog
+        workspaceRoot: dog/workspace
+        scriptsDirectory: dog/scripts
         maxGraphNodes: 256
         maxExpressionNodes: 512
         maxExpressionDepth: 64
-        maxSnapshotBytes: 67108864
+        maxSandboxBytes: 67108864
         allowPartialRoot: false
+        maxConcurrentVerifications: 1
+        revalidateThreshold: 0.3
+        gmDigestAlgo: sha256
+        subagentProvider: spawn
+        subagentMaxDepth: 3

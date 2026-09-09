@@ -4,9 +4,9 @@ import { writeFile, rm, mkdtemp, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { apply } from '../src/index.ts'
-import { DOG_CREATE_TOOL, DOG_RUN_TOOL, DOG_STATUS_TOOL, DOG_VALIDATE_TOOL } from '../src/tools.ts'
-import { isJsonValue } from '../src/model.ts'
+import { apply } from '../src/dsh/plugin.ts'
+import { DOG_CREATE_TOOL, DOG_RUN_TOOL, DOG_STATUS_TOOL, DOG_VALIDATE_TOOL } from '../src/dsh/tools.ts'
+import { isJsonValue } from '../src/core/model.ts'
 
 let ctx: { tools: { execute(input: unknown): Promise<{ isError: boolean; error?: { message: string }; value?: unknown }>; register(_t: unknown): void } }
 let plugin: { apply(ctx: unknown, config: unknown): Promise<unknown> }
@@ -26,7 +26,7 @@ async function fakeCtx(): Promise<typeof ctx> {
       register(t: unknown) { tools.push(t) },
       async execute(input: unknown): Promise<{ isError: boolean; error?: { message: string }; value?: unknown }> {
         const args = input as { name: string; arguments: unknown }
-        if (tools.length) console.log('DBG_TOOL0', Object.keys(tools[0] as object).slice(0, 6).join(","), 'name=', (tools[0] as { name?: string }).name)
+
         const tool = tools.find(t => (t as { name: string }).name === args.name) as { execute(args: unknown, exec: unknown): Promise<unknown> } | undefined
         if (tool === undefined) return { isError: true, error: { message: `no tool ${args.name}` } }
         try {
@@ -76,8 +76,7 @@ describe('DoG Cordis plugin v0.9', () => {
       subagentMaxDepth: 3,
     }
     plugin = { apply }
-    await (plugin.apply as (ctx: unknown, config: unknown) => Promise<unknown>)(setupCtx, config).catch(e => { console.log('DBG_APPLY_ERR', e); throw e })
-    console.log('DBG_TOOLS', (ctx.tools as unknown as { _count?: number })._count, '| registered via execute check')
+    await (plugin.apply as (ctx: unknown, config: unknown) => Promise<unknown>)(setupCtx, config)
   })
 
   afterAll(async () => {

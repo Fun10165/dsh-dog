@@ -3,9 +3,9 @@
 import { writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, it, expect, afterEach } from 'vitest'
-import { DogEngine } from '../src/core.ts'
-import type { DogConfig } from '../src/model.ts'
-import { DogRepository } from '../src/storage.ts'
+import { DogEngine } from '../src/core/engine.ts'
+import type { DogConfig } from '../src/core/model.ts'
+import { DogRepository } from '../src/core/storage.ts'
 import { compositeNode, ensureScripts, graph, leafNode, mkConfig, temporaryRoot } from './helpers.ts'
 
 const roots: string[] = []
@@ -58,7 +58,7 @@ describe('v0.9 agentic kernel', () => {
       audit: leafNode({ verifier: { mode: 'agentic', instruction: '检查' } }),
     }, [{ parent: 'root', child: 'audit', required: true, failure: 'fatal' }]))
     const run = await dog.run(compiled.input.id)
-    console.log('DBG_RUN', JSON.stringify(run.goals))
+
     expect(run.goals.audit?.state).toBe('failure')
     expect(run.rootState).toBe('failure')
     expect(run.goals.audit?.verification?.judgment).toEqual({ mode: 'agentic', instructionHash: expect.stringMatching(/^sha256:/) })

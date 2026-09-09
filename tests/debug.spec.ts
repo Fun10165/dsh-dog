@@ -3,9 +3,9 @@
 import { writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, it, expect, afterEach } from 'vitest'
-import { DogEngine } from '../src/core.ts'
-import { DogRepository } from '../src/storage.ts'
-import { buildDogDebugSnapshot } from '../src/debug.ts'
+import { DogEngine } from '../src/core/engine.ts'
+import { DogRepository } from '../src/core/storage.ts'
+import { buildDogDebugSnapshot } from '../src/dsh/debug.ts'
 import { parseDogDebugSnapshot } from '../src/client/snapshot.ts'
 import { compositeNode, ensureScripts, graph, leafNode, mkConfig, stubAgentic, stubProgrammatic, temporaryRoot } from './helpers.ts'
 

@@ -1,8 +1,15 @@
 /** Live DSH session telemetry projected onto persisted DoG Agent bindings. */
 
-import type { SessionId, SessionListState, SessionSummary } from '@deepseek-ai/dsh-client-runtime/client'
-import type { DogDebugSnapshot } from '../debug.ts'
-import type { DogRun, GoalAgentSessionRef, GoalState } from '../model.ts'
+import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionPendingInteractionSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
+import type { DogDebugSnapshot } from '../core/debug.ts'
+import type { DogRun, GoalAgentSessionRef, GoalState } from '../core/model.ts'
+
+/** Sessions awaiting a user answer, keyed by session id. */
+export type PendingInteractions = SessionPendingInteractionSnapshot
+
+const NO_PENDING_INTERACTIONS: PendingInteractions = new Map()
 
 export interface GoalAgentTelemetry {
   readonly ref: GoalAgentSessionRef
@@ -67,6 +74,7 @@ export function agentParentSessionIds(snapshot: DogDebugSnapshot): readonly stri
 export function goalAgentTelemetry(
   ref: GoalAgentSessionRef,
   sessions: SessionListState,
+  pending: PendingInteractions = NO_PENDING_INTERACTIONS,
   now = Date.now(),
 ): GoalAgentTelemetry {
   const summary = sessions.byId[ref.sessionId as SessionId]
@@ -77,7 +85,7 @@ export function goalAgentTelemetry(
     label: summary?.displayTitle ?? summary?.title ?? `${capitalize(ref.role)} Agent`,
     available: summary !== undefined,
     running: summary?.running ?? false,
-    needsInput: summary?.pendingInteraction !== undefined,
+    needsInput: pending.has(ref.sessionId as SessionId),
     ...(tokens === undefined ? {} : { tokens }),
     ...(durationMs === undefined ? {} : { durationMs }),
   }
@@ -87,6 +95,7 @@ export function goalAgentTelemetry(
 export function summarizeRunAgents(
   run: DogRun | undefined,
   sessions: SessionListState,
+  pending: PendingInteractions = NO_PENDING_INTERACTIONS,
   now = Date.now(),
 ): RunAgentSummary {
   const refs = runAgentRefs(run)
@@ -95,7 +104,7 @@ export function summarizeRunAgents(
   let tokens = 0
   let measured = 0
   for (const ref of refs) {
-    const telemetry = goalAgentTelemetry(ref, sessions, now)
+    const telemetry = goalAgentTelemetry(ref, sessions, pending, now)
     if (telemetry.available) visible += 1
     if (telemetry.running) running += 1
     if (telemetry.tokens !== undefined) {
