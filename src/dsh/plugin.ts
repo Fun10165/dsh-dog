@@ -30,8 +30,13 @@ import { createDogDelegateAgentTool, createDogTools, type DogSessionFacts } from
 
 /** Cordis plugin name. */
 export const name = 'dsh-dog'
-/** Required Harness services: tool registry plus the session facts tools read. */
-export const inject = ['tools', 'sessions']
+/**
+ * Required Harness services. Cordis gates every typed service access on the
+ * caller's `inject` (reading an undeclared one throws at first use), so this
+ * list must name every service the plugin touches: `tools` (registry),
+ * `sessions` (cwd/lineage facts), and `agents` (live-verifier liveness).
+ */
+export const inject = ['tools', 'sessions', 'agents']
 
 /** Loader-validated DoG deployment configuration (also the settings base). */
 export type Config = DogConfig
@@ -102,7 +107,7 @@ export async function apply(ctx: Context, config: DogConfig): Promise<void> {
      const live = settingsCurrent?.()
      return live === undefined ? {} : { maxConcurrentVerifications: live.maxConcurrentVerifications }
     },
-    resolveLivingAgent: sessionId => ctx.agents.get(sessionId as SessionId),
+    agentWorkspaceDir: sessionId => ctx.sessions.get(sessionId as SessionId)?.header.cwd,
    })
   }
   return dogEngine

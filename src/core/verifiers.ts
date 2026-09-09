@@ -1,7 +1,6 @@
 /** DoG v0.9 verification kernels: exactly two — programmatic (script) and agentic (LLM). */
 
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { JsonValue, VerifierShape } from './model.ts'
+import type { HostAgentToken, JsonValue, VerifierShape } from './model.ts'
 
 /** A verdict is a two-field minimum: the judgment and free-form evidence. */
 export interface Verdict {
@@ -16,7 +15,7 @@ export interface IsolatedWorkspace {
 }
 
 export interface VerifierExecutionEnv {
- readonly parent?: Agent | undefined
+ readonly parent?: HostAgentToken | undefined
  readonly signal?: AbortSignal
  readonly runId?: string
  readonly goalId?: string

@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.3.0-alpha.2 (2026-09-09) — inject contract fix (dog_run was unusable)
+
+**Defect**: `dog_run` failed in every profile with
+`Error: cannot get property "agents" without inject` and never created a run.
+Cordis gates every typed service access on the caller's `inject` list, and the
+alpha port had replaced the old defensive `ctx.get('agents')` accessor with a
+bare `ctx.agents` read without declaring the service.
+
+### Fixed
+- `inject` now declares `agents` alongside `tools`/`sessions`, with a comment
+  recording the Cordis rule (typed service access requires the dependency).
+- `src/core/` is **actually** Harness-free now: the engine and kernel contracts
+  no longer import `@deepseek-ai/dsh-agent`. The opaque `HostAgentToken`
+  (`{ id }`) carries the live agent through the kernel contract, and the engine
+  asks the host for the invoking session's working directory through
+  `agentWorkspaceDir(sessionId)` instead of reaching into a live `Agent`'s
+  session header.
+
+### Regression guard
+- `tests/inject-contract.spec.ts` loads the plugin through a **real Cordis
+  context** (services provided by a sibling plugin, as the real composition
+  does), runs one agentic leaf, and asserts the liveness probe actually read
+  `ctx.agents` — removing `agents` from `inject` turns it red
+  (`needs_replan`), so the class of defect cannot return silently.
+- 42 tests total.
+
+### Verified on the real host
+- Headless `dsh --profile headless` on `0.1.5-alpha.1`: `dog_create` →
+  `dog_run` → `dog_status` settled `rootState: success` (leaf evidence
+  `bytes: 18`) — the exact path that previously threw.
+
 ## v1.3.0-alpha.1 (2026-09-09) — DSH alpha platform port + layered refactor
 
 Targets the DSH **alpha** line (`@deepseek-ai/dsh@0.1.5-alpha.1`) and splits the

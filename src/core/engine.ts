@@ -21,10 +21,10 @@ import type {
  GoalAgentRole,
  GoalAgentSessionRef,
  GraphValidationReport,
+ HostAgentToken,
  RootTerminalState,
  VerificationRecord,
 } from './model.ts'
-import type { Agent } from '@deepseek-ai/dsh-agent'
 import { DogRepository, captureWorkspaceTarget, type CapturedInputFile } from './storage.ts'
 import { runPlan, type AgenticRunner, type ProgrammaticRunner, type Settlement } from './verifiers.ts'
 import { WorkspaceManager } from './workspace.ts'
@@ -45,8 +45,12 @@ export interface DogEngineOptions {
  readonly now?: () => Date
  readonly nextRunId?: () => string
  readonly heartbeatMs?: number
- /** Resolve a live Agent by its session id (host wiring: AgentRegistry.get). */
- readonly resolveLivingAgent?: (sessionId: string) => Agent | undefined
+ /**
+  * Working directory of the invoking session, used as the verifier workspace
+  * base so settlements round-trip into the tree the caller may write. Host
+  * wiring reads it from the session store; the engine never sees an Agent.
+  */
+ readonly agentWorkspaceDir?: (sessionId: string) => string | undefined
 }
 
 export interface DogRunOptions {
@@ -56,7 +60,7 @@ export interface DogRunOptions {
   readonly parentSessionId?: string
  }
  readonly signal?: AbortSignal
- readonly agent?: Agent | undefined
+ readonly agent?: HostAgentToken | undefined
 }
 
 export interface DogBindAgentOptions {
@@ -102,7 +106,7 @@ export class DogEngine {
  private readonly backgroundTasks = new Set<Promise<void>>()
  private readonly runStops = new Map<string, () => void>()
  private readonly workspaceBaseDirs = new Map<string, string | undefined>()
- private readonly resolveLivingAgent: ((sessionId: string) => Agent | undefined) | undefined
+ private readonly agentWorkspaceDir: ((sessionId: string) => string | undefined) | undefined
 
  /** Install the two judgment kernels (host wiring; may arrive later than construction). */
  setKernels(programmatic: ProgrammaticRunner | undefined, agentic: AgenticRunner | undefined): void {
@@ -122,7 +126,7 @@ export class DogEngine {
   this.now = options.now ?? (() => new Date())
   this.nextRunId = options.nextRunId ?? (() => randomUUID())
   this.heartbeatMs = options.heartbeatMs ?? 30_000
-  this.resolveLivingAgent = options.resolveLivingAgent
+  this.agentWorkspaceDir = options.agentWorkspaceDir
   this.workspaceRoot = options.config.workspaceRoot
  }
 
@@ -337,11 +341,10 @@ export class DogEngine {
   // Verifier workspaces must land inside the calling session's workspace: that
   // is exactly the tree a verifier subagent's sandbox (workspace-write) permits
   // writing into, so settlements can round-trip. Resolve it once at run start.
-  const workspaceBaseDir = options.invocation?.agentSessionId === undefined || this.resolveLivingAgent === undefined
+  const workspaceBaseDir = options.invocation?.agentSessionId === undefined || this.agentWorkspaceDir === undefined
    ? undefined
    : (() => {
-    const agent = this.resolveLivingAgent(options.invocation!.agentSessionId!)
-    const cwd = agent?.session.header.cwd
+    const cwd = this.agentWorkspaceDir(options.invocation!.agentSessionId!)
     return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined
    })()
   this.workspaceBaseDirs.set(runId, workspaceBaseDir)

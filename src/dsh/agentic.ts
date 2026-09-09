@@ -52,7 +52,10 @@ export function createAgenticRunner(
  const activeVerifiers = new Map<string, { readonly parent: Agent; readonly runId: string }>()
 
  const runner: AgenticRunner = async (instruction, workspace, inputPath, env) => {
-  const { parent, runId } = env
+  // The core contract hands back an opaque token; in this layer it is the
+  // exact live Agent the tool runtime supplied.
+  const parent = env.parent as Agent | undefined
+  const { runId } = env
   const signal = env.signal ?? new AbortController().signal
   const goalId = env.goalId ?? 'verification'
   const resultPath = join(workspace.path, 'settlement.json')

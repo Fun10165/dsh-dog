@@ -3,7 +3,6 @@
 import { writeFile, mkdir, rm, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, it, expect, afterEach } from 'vitest'
-import type { Agent } from '@deepseek-ai/dsh-agent'
 import { DogEngine } from '../src/core/engine.ts'
 import type { DogConfig, VerifierShape } from '../src/core/model.ts'
 import { DogRepository } from '../src/core/storage.ts'
@@ -22,14 +21,14 @@ afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 
-function engine(root: string, opts: { programmatic?: ReturnType<typeof stubProgrammatic>; agentic?: ReturnType<typeof stubAgentic>; config?: DogConfig; resolveLivingAgent?: (id: string) => Agent | undefined; now?: () => Date } = {}): DogEngine {
+function engine(root: string, opts: { programmatic?: ReturnType<typeof stubProgrammatic>; agentic?: ReturnType<typeof stubAgentic>; config?: DogConfig; agentWorkspaceDir?: (id: string) => string | undefined; now?: () => Date } = {}): DogEngine {
   const scripts = join(root, 'scripts')
   const dog = new DogEngine({
     config: opts.config ?? mkConfig(root, scripts),
     repository: new DogRepository(join(root, '.dog-store')),
     now: opts.now ?? (() => new Date('2026-08-23T00:00:00.000Z')),
     nextRunId: () => `run-${Math.random().toString(36).slice(2)}`,
-    ...(opts.resolveLivingAgent === undefined ? {} : { resolveLivingAgent: opts.resolveLivingAgent }),
+    ...(opts.agentWorkspaceDir === undefined ? {} : { agentWorkspaceDir: opts.agentWorkspaceDir }),
   })
   dog.setKernels(opts.programmatic ?? stubProgrammatic(), opts.agentic ?? stubAgentic())
   return dog
@@ -379,7 +378,7 @@ describe('v0.9 engine', () => {
     const agentCwd = await tmpRoot()
     await writeFile(join(root, 'artifact.txt'), 'verified')
     const dog = engine(root, {
-      resolveLivingAgent: id => (id === 'session-ws-1' ? { id, session: { header: { cwd: agentCwd } } } as unknown as Agent : undefined),
+      agentWorkspaceDir: id => (id === 'session-ws-1' ? agentCwd : undefined),
     })
     const compiled = await dog.create(graph({
       root: compositeNode({ op: 'ref', id: 'leaf' }),
