@@ -128,4 +128,38 @@ describe('DoG Cordis plugin v0.9', () => {
     expect(value.rootState).toBe('running')
     expect(isJsonValue(JSON.parse(JSON.stringify(value)))).toBe(true)
   })
+
+  it('accepts a graph passed as JSON text and names the mistake for a non-JSON string', async () => {
+    const graph = {
+      schemaVersion: '0.9',
+      id: 'plugin-text-arg',
+      root: 'root',
+      nodes: {
+        root: { kind: 'composite', title: 'root', constraint: 'hard', target: 'artifact.txt', completion: { op: 'ref', id: 'leaf' } },
+        leaf: { kind: 'leaf', title: 'leaf', constraint: 'hard', target: 'artifact.txt', verifier: { mode: 'programmatic', script: 'file-non-empty' } },
+      },
+      contains: [{ parent: 'root', child: 'leaf', required: true, failure: 'fatal' }],
+      dependsOn: [],
+    }
+    // Models routinely hand a `json` parameter a JSON-encoded string; that must
+    // behave exactly like the object form instead of failing graph validation.
+    const viaText = await ctx.tools.execute({
+      callId: 'vt',
+      name: DOG_VALIDATE_TOOL,
+      arguments: { graph: JSON.stringify(graph) },
+      signal: new AbortController().signal,
+    })
+    expect(viaText.isError).toBe(false)
+    expect((viaText.value as { valid: boolean }).valid).toBe(true)
+
+    // A string that is not JSON must say so, so the model corrects it in one step.
+    const notJson = await ctx.tools.execute({
+      callId: 'vb',
+      name: DOG_VALIDATE_TOOL,
+      arguments: { graph: 'this is not json' },
+      signal: new AbortController().signal,
+    })
+    expect(notJson.isError).toBe(true)
+    expect(notJson.error?.message).toContain('not valid JSON')
+  })
 })

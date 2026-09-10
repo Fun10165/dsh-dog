@@ -58,29 +58,29 @@ export function createDogTools(
  return [
   defineTool({
    name: DOG_VALIDATE_TOOL,
-   description: 'Statically validate a DoG v0.2 graph. This does not write files, capture sandbox files, or run goals.',
+   description: 'Statically validate a DoG v0.9 graph. This does not write files, capture sandbox files, or run goals.',
    parameters: {
-    graph: { type: 'json', required: true, description: 'Complete JSON DoG graph using schemaVersion 0.2.' },
+    graph: { type: 'json', required: true, description: 'Complete DoG graph object using schemaVersion "0.9" (a JSON-encoded string of the same object is also accepted).' },
    },
    output: JSON_OUTPUT,
    isConcurrencySafe: () => true,
    execute: async (args, exec) => {
     exec.signal.throwIfAborted()
-    return jsonResult(engine().validate(args.graph))
+    return jsonResult(engine().validate(coerceGraphArgument(args.graph)))
    },
   }),
   defineTool({
    name: DOG_CREATE_TOOL,
-   description: 'Compile and persist a valid DoG v0.2 graph, capturing verifier input files from the configured sandbox as immutable bytes.',
+   description: 'Compile and persist a valid DoG v0.9 graph, capturing verifier input files from the configured sandbox as immutable bytes.',
    parameters: {
-    graph: { type: 'json', required: true, description: 'Complete JSON DoG graph using schemaVersion 0.2.' },
+    graph: { type: 'json', required: true, description: 'Complete DoG graph object using schemaVersion "0.9" (a JSON-encoded string of the same object is also accepted).' },
    },
    output: JSON_OUTPUT,
    async execute(args, exec) {
     exec.signal.throwIfAborted()
     const cwd = exec.agent === undefined ? undefined : sessionFacts(String(exec.agent.id))?.cwd
     const compiled = await engine().create(
-     args.graph,
+     coerceGraphArgument(args.graph),
      typeof cwd === 'string' && cwd.length > 0 ? { captureBaseDir: cwd } : {},
     )
     exec.signal.throwIfAborted()
@@ -372,4 +372,28 @@ function runSummary(run: DogRun): JsonValue {
 function jsonResult(value: unknown): JsonValue {
  if (!isJsonValue(value)) throw new Error('DoG produced a non-JSON tool result')
  return value
+}
+
+/**
+ * Accept a graph handed over as JSON *text* as well as an object.
+ *
+ * The `graph` parameter is typed `json`, so a JSON-encoded string is schema-
+ * valid and reaches the engine, where it fails schema validation with an error
+ * that reads like a malformed graph — models then debug the wrong thing (a
+ * real run burned 45 tool calls chasing this). Parsing here, and naming the
+ * actual mistake when parsing fails, keeps the correction to one step.
+ */
+function coerceGraphArgument(value: unknown): unknown {
+ if (typeof value !== 'string') return value
+ const preview = value.length <= 60 ? value : `${value.slice(0, 57)}...`
+ let parsed: unknown
+ try {
+  parsed = JSON.parse(value)
+ } catch {
+  throw new Error(`graph arrived as a string that is not valid JSON (${preview}); pass the graph as a JSON object`)
+ }
+ if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  throw new Error(`graph arrived as a string holding ${Array.isArray(parsed) ? 'an array' : typeof parsed} (${preview}); pass the graph as a JSON object`)
+ }
+ return parsed
 }

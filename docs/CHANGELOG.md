@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.3.0-rc.1 (2026-09-10) — retarget to the DSH release candidate
+
+DSH `0.1.5-rc.1` (published 2026-09-10, now `latest`/`next`) is API-identical
+to `0.1.5-alpha.1` for every contract this plugin consumes: **no source change
+was required**, only the pinned versions moved. Verified by pointing the
+devDependencies at the RC and running the full gate:
+
+- `tsc` — 0 errors (every alpha-era service contract still resolves).
+- `vitest` — 42/42, including the real-Cordis inject-contract guard.
+- The one new package in the RC dependency set (`@deepseek-ai/dsh-tool-present`,
+  explicit workspace delivery declarations) is not on this plugin's surface.
+
+**Still broken upstream in rc.1** (unchanged from alpha, reported for the
+record): `ctx.connection.rpc.handle(channel, handler)` resolves `webServer` from
+the Connection plugin's own fiber, so every external caller throws
+`cannot get property "webServer" without inject` and no prefix route is
+mounted. This plugin therefore keeps its two exact Fetch routes on the shared
+`/api` carrier.
+
+### Fixed while validating on the RC
+- **`graph` now accepts JSON text as well as an object.** A model that hands a
+  `json` parameter a JSON-encoded string used to reach graph validation, fail
+  with a malformed-graph error, and then debug the wrong thing: one real
+  headless run burned **45 bash calls and 258s** chasing it before delegating
+  to a subagent that happened to pass an object. A string containing a graph
+  object is now parsed; a string that is not valid JSON is rejected with an
+  error that names the mistake, keeping the correction to one step.
+  Same prompt after the fix: **7.9s**.
+- **Tool descriptions no longer say `schemaVersion 0.2`** (stale since the 0.9
+  protocol) — they now name `"0.9"` and state that the string form is accepted,
+  so a model following the description cannot be led into writing an obsolete
+  version.
+- 43 tests (added: JSON-text argument accepted, non-JSON string named).
+
 ## v1.3.0-alpha.2 (2026-09-09) — inject contract fix (dog_run was unusable)
 
 **Defect**: `dog_run` failed in every profile with
