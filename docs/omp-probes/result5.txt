@@ -1,0 +1,30 @@
+# probe5.ts 的类型层输出(tsc,strict)
+#
+# 复现(行号与 probe5.ts 一致,cp 不改行):
+#   mkdir -p /tmp/omp-zodprobe && cp <repo>/docs/omp-probes/probe5.ts /tmp/omp-zodprobe/probe.ts
+#   tsconfig.json 里把 "@oh-my-pi/*" 指到 omp-dog 的类型沙箱:
+#     { "compilerOptions": { "target": "ESNext", "module": "ESNext", "moduleResolution": "bundler",
+#         "lib": ["ESNext"], "strict": true, "noEmit": true, "skipLibCheck": true,
+#         "allowImportingTsExtensions": true, "types": [],
+#         "paths": { "@oh-my-pi/*": ["<omp-dog>/dev/typecheck/node_modules/@oh-my-pi/*"] } },
+#       "include": ["probe.ts"] }
+#   <omp-dog>/node_modules/.bin/tsc -p /tmp/omp-zodprobe/tsconfig.json
+#
+# 原始输出:
+
+probe.ts(27,10): error TS2322: Type 'unknown' is not assignable to type '1'.
+probe.ts(40,10): error TS2322: Type 'string' is not assignable to type '1'.
+probe.ts(41,10): error TS2322: Type 'unknown' is not assignable to type '1'.
+probe.ts(42,10): error TS2322: Type 'AbortSignal | undefined' is not assignable to type '1'.
+  Type 'undefined' is not assignable to type '1'.
+probe.ts(43,10): error TS2322: Type 'AgentToolUpdateCallback<unknown> | undefined' is not assignable to type '1'.
+  Type 'undefined' is not assignable to type '1'.
+probe.ts(44,10): error TS2322: Type 'ExtensionContext' is not assignable to type '1'.
+
+# 读法:
+# - (27,10):用例 1 —— `parameters: pi.zod.object({…})` 时 execute 的 `params` 推成 `unknown`(§8.4)。
+# - (40,10):用例 2 第 1 参 = `string`(toolCallId),与契约一致。
+# - (41,10):第 2 参 = `unknown`(params)。
+# - (42,10):按官方示例把第 3 参写成 `onUpdate`,契约给的却是 `AbortSignal | undefined` —— 示例的第 3/4/5 参与契约的 signal/onUpdate/ctx 位置互换(§8.1)。
+# - (43,10):第 4 参 = `AgentToolUpdateCallback<unknown> | undefined`。
+# - (44,10):第 5 参 = `ExtensionContext`。
