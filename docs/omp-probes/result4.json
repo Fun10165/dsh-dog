@@ -1,0 +1,10 @@
+{
+  "textCtor": "function",
+  "containerCtor": "function",
+  "formatNumber": "function",
+  "sample": "1.2M",
+  "canConstruct": "ok",
+  "zodObject": "function",
+  "arktype": "function",
+  "cwd": "/tmp/omp-probe"
+}
