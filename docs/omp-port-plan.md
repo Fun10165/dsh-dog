@@ -41,14 +41,14 @@ dsh-dog 的**判据层(引擎/图/存储/台账,3071 行)零改动可用**;适�
 
 ### 2.1 可用
 
-| 机制 | 入口 |
-|---|---|
-| 工具注册(+ TUI 自定义渲染) | `pi.registerTool({name,label,description,parameters,loadMode,approval,execute,renderCall,renderResult})` |
-| 命令 / 快捷键 / flag | `pi.registerCommand` / `registerShortcut` / `registerFlag` |
-| 状态行 / widget / 全屏 overlay | `ctx.ui.setStatus` / `setWidget(key, string[]\|ComponentFactory, {placement})` / `custom({overlay})` |
-| 消息卡(不触发 turn) | `pi.sendMessage({customType,content,display:true},{triggerTurn:false})` |
-| 子进程 | `pi.exec(cmd, args[], {cwd,signal,timeout})` → `{stdout,stderr,code,killed}` |
-| 持久化 | 自己的文件树 + `pi.appendEntry` / `ctx.sessionManager`(只读,含 `getArtifactsDir/saveArtifact`) |
+| 机制 | 入口 | 证据 |
+|---|---|---|
+| 工具注册(+ TUI 自定义渲染) | `pi.registerTool({name,label,description,parameters,loadMode,approval,execute,renderCall,renderResult})` | `源码` `src/extensibility/extensions/types.ts` 的 `ToolDefinition`(字段与 `execute` 签名);`真机` 本仓 7 个工具已注册,渲染帧见下条注释的 tui-check 会话(`dog graphId=tui-check mode=auto` → `dog success ✓✓`) |
+| 命令 / 快捷键 / flag | `pi.registerCommand` / `registerShortcut` / `registerFlag` | `源码` 同上文件的 `ExtensionAPI`;`真机` `/dog` 在本仓 tui-check 会话里执行并打出报告卡 |
+| 状态行 / widget / 全屏 overlay | `ctx.ui.setStatus` / `setWidget(key, string[]\|ComponentFactory, {placement})` / `custom({overlay})` | `源码` `src/modes/controllers/extension-ui-controller.ts`(widget 实现,string[] 上限 10 行)+ `types.ts` 的 `ExtensionUIContext`;`真机` 底栏出现 `dog success ✓✓`(tui-check 会话帧) |
+| 消息卡(不触发 turn) | `pi.sendMessage({customType,content,display:true},{triggerTurn:false})` | `源码` `types.ts` 的 `sendMessage` 选项(`deliverAs`/`triggerTurn`)与 `src/modes/components/message-frame.ts`(默认按 markdown 渲染正文);`真机` `/dog` 打出的 `customType:"dog.report"` 卡片 |
+| 子进程 | `pi.exec(cmd, args[], {cwd,signal,timeout})` → `{stdout,stderr,code,killed}` | `源码` `types.ts` 的 `exec` 声明 + `src/exec/exec.ts` 的 `ExecResult`;`真机` 脚本判据经它执行(`omp-dog/dev/smoke.sh` 用例 1 的 evidence 即脚本 stdout) |
+| 持久化 | 自己的文件树 + `pi.appendEntry` / `ctx.sessionManager`(只读,含 `getArtifactsDir/saveArtifact`) | `源码` `types.ts` 的 `appendEntry` + `src/session/session-manager.ts` 的 `ReadonlySessionManager` pick 列表;`真机` 本仓全部状态落在 `<项目>/.omp/dog/`(smoke 工作目录可查) |
 | 组件库 | **静态** `import { Container, Text } from "@oh-my-pi/pi-tui"`(loader 重写到二进制内置副本)。证据:`源码` `src/extensibility/plugins/legacy-pi-compat.ts` 的 `PI_PACKAGE_NAMES` 与 `legacyPiPackageRootOverrides`;`探针` `docs/omp-probes/probe4.ts` → `result4.json`(`canConstruct: "ok"`) |
 | 扩展包自带 agent 定义 | `<extension-root>/agents/*.md` 是 task 发现链第 3 层。证据:`真机` 本机会话用 `task {agent:"dog-verifier"}` 派发成功,子代理 `dog-verify-1` 运行 1m8s 并写下结算文件 `<项目>/.omp/dog/dispatches/*.settlement.json`(原件:本仓审计会话 `:16468` 的 `<task-result id="dog-verify-1" agent="dog-verifier" status="completed" duration="1m8s">`,其 `settlementPath` 指向 `dispatches/eee6b8…/…settlement.json`) |
 
@@ -116,7 +116,11 @@ DoG 的机械判据 + 证据台账在这里是**空位补位**,不是重复造�
 **信任边界(必须说清)**:结算由子代理写,模型自己也能写文件——**"模型伪造结算"原理上防不住**(DSH 版同样如此)。
 上面三条是**绑定**不是防伪;它保证的是"旧字节/别的判据的判决不可能被复用"。
 
-**注意**:`outputSchema` 的结构化结果只回给**模型**,扩展拿不到 `task` 的返回值 → 判据权威只能建立在磁盘文件上。
+**注意(此处曾写错,已按事实更正)**:扩展**不能像模型那样调用 `task` 并同步拿到它的返回值**——`pi`/`ctx` 没有工具调用面(§2.2 的枚举)。
+`outputSchema` 的结构化结果因此回给**发起调用的模型**,而不是判据插件。
+扩展**可以**用 `pi.on("tool_result", …)` 观测每次工具结果(含 `task` 的),但那是**全局中间件**:它按会话事件流工作、只在本次进程内可见,也没法把结果回灌给已经返回的那次工具调用。
+本移植**故意不依赖**它——判据权威因此建立在磁盘结算文件上:判决只与"冻结字节 + 判据原文 + 派发时序"绑定,与模型在第几轮、进程是否重启过都无关。
+证据:`源码` `src/extensibility/extensions/types.ts` 的 `ToolDefinition.execute` 把结果交给调用方(模型),扩展侧只有 `pi.on` 事件面;`真机` 本会话用 **eval 内核的桥** `await tool.task(...)` 拿到 `{text, details}`——那是 eval 的能力,不是扩展 API。
 
 ---
 
