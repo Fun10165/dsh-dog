@@ -16,6 +16,11 @@ dsh-dog 的**判据层(引擎/图/存储/台账,3071 行)零改动可用**;适�
 
 ## 2. OMP 机制盘点(实测)
 
+本节每条都注明证据位置,分三类:`探针`(本仓 `docs/omp-probes/` 的脚本与结果 JSON)、
+`源码`(官方 npm 包 `@oh-my-pi/pi-coding-agent@18.2.4` 解包后的 `path:line`)、
+`真机`(本机 omp 18.2.3 上可重跑的命令与观察结果)。标 `[推断]` 的是我从材料里读出的结论,
+不是直接观测。
+
 ### 2.1 可用
 
 | 机制 | 入口 |
@@ -26,21 +31,22 @@ dsh-dog 的**判据层(引擎/图/存储/台账,3071 行)零改动可用**;适�
 | 消息卡(不触发 turn) | `pi.sendMessage({customType,content,display:true},{triggerTurn:false})` |
 | 子进程 | `pi.exec(cmd, args[], {cwd,signal,timeout})` → `{stdout,stderr,code,killed}` |
 | 持久化 | 自己的文件树 + `pi.appendEntry` / `ctx.sessionManager`(只读,含 `getArtifactsDir/saveArtifact`) |
-| 组件库 | **静态** `import { Container, Text } from "@oh-my-pi/pi-tui"`(loader 重写到二进制内置副本) |
-| 扩展包自带 agent 定义 | `<extension-root>/agents/*.md` 是 task 发现链第 3 层(实测可派发) |
+| 组件库 | **静态** `import { Container, Text } from "@oh-my-pi/pi-tui"`(loader 重写到二进制内置副本)。证据:`源码` `src/extensibility/plugins/legacy-pi-compat.ts` 的 `PI_PACKAGE_NAMES` 与 `legacyPiPackageRootOverrides`;`探针` `docs/omp-probes/probe4.ts` → `result4.json`(`canConstruct: "ok"`) |
+| 扩展包自带 agent 定义 | `<extension-root>/agents/*.md` 是 task 发现链第 3 层。证据:`真机` 本机会话用 `task {agent:"dog-verifier"}` 派发成功,子代理 `dog-verify-1` 运行 1m8s 并写下结算文件 `<项目>/.omp/dog/dispatches/*.settlement.json` |
 
 ### 2.2 不可用 / 受限
 
-- **派发 subagent:无 API**(`pi` 33 个方法、`ctx` 23 个方法里都没有;`ctx.invokeTool` 仅同名内置委托)。
-- 调任意内置工具:不行。
-- Web 面板 / HTTP 路由:无官方通道(`--mode=rpc-ui` 不是 web UI;导出 HTML 对扩展工具只出 generic JSON 卡)。
-- 热重载:无,改扩展要重启会话。
-- 隔离:扩展与宿主同进程无隔离,未捕获异常掀翻整个 session。
-- 扩展包内的 `skills/` 不被发现(实测)。
+- **派发 subagent:无 API**。证据:`探针` `docs/omp-probes/index.ts` → `result.json` 的 `piProto`/`ctxProto` 全量枚举(各 30/23 项,含 `constructor`,无任何 spawn/agent 方法);`源码` `src/extensibility/extensions/types.ts:540` 的 `invokeTool` 注释为同名内置委托。
+- 调任意内置工具:不行。证据:`源码` `types.ts:540`(`invokeTool` 只在重注册同名内置时存在)+ `探针` `result.json` 里 `ctxProto` 无通用调用面。
+- Web 面板 / HTTP 路由:无官方通道。证据:`源码` `src/modes/rpc/rpc-mode.ts:883-1056`(`--mode=rpc-ui` 只是 stdio RPC + 工具 UI 通道,无 HTTP);导出 HTML 的工具卡来自构建期字面量注册表,扩展工具落 generic JSON 卡。
+- 热重载:无,改扩展要重启会话。证据:`真机` 本机实测——改 `index.ts` 新增 `graphFile` 参数后,当前已启动的会话仍按旧 schema 工作,直到另起一次 `omp -p` 才生效;`源码` `src/extensibility/extensions/loader.ts` 只在加载期 import。
+- 隔离:扩展与宿主同进程无隔离,未捕获异常掀翻整个 session。证据:`源码` 官方扩展文档 `extensions.md` 的 "Background work" 段(裸 `setTimeout` 抛错会以 `uncaughtException` 结束会话)。
+- 扩展包内的 `skills/` 不被发现。证据:`真机` 把 `SKILL.md` 放进 `<extension-root>/skills/<name>/` 后,`omp -p --model <m> "列出含 dog 的 skill 名"` 只返回托管库里的 skill;同一条命令在把该 skill 装成托管 skill 后返回了它。
 
 ### 2.3 需要但缺位的概念
 
-OMP **没有通用「验证器」概念**——最接近的只有 advisor 意见、`cleanse` 环、`security_scan` 证据库、subagent `outputSchema` 校验。
+OMP **没有通用「验证器」概念**——最接近的只有 advisor 意见、`cleanse` 环、`security_scan` 证据库、subagent `outputSchema` 校验。`[推断]`
+依据是 `源码` `src/` 目录清单与官方文档索引(`omp://` 131 篇)里没有验证器契约,只有上述若干专用机制;这是"未发现",不等于"不存在"。
 DoG 的机械判据 + 证据台账在这里是**空位补位**,不是重复造轮子。
 
 ---
@@ -157,8 +163,8 @@ DoG 的机械判据 + 证据台账在这里是**空位补位**,不是重复造�
 3. `loadMode` 默认 `discoverable` → 工具被藏进 `xd://`;要顶层必须 `essential`。
 4. `pi.zod` 的类型推断传不到 `parameters` → execute 的 `params` 必须手写注解。
 5. `AgentToolResult.content` 可变;`evidence`/`details` 里不能有值为 `undefined` 的键。
-6. 扩展包内 `skills/` 不被发现(要装托管 skill)。
-7. 无热重载;`-e` 与自动发现会重复命中,测试时别混用。
+6. 扩展包内 `skills/` 不被发现(要装托管 skill)。证据同 §2.2。
+7. 无热重载(证据同 §2.2);`-e` 与自动发现会重复命中,测试时别混用。`[推断]` 后半句由加载路径推出(`-e` 与 `discoverExtensionPaths` 两条来源合并),未单独设计实验区分。
 8. `tar` 是外部依赖(捕获目录、物化对象都用它),与 DSH 版一致。
 
 ---

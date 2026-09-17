@@ -6,3 +6,6 @@ lib/
 .dog-test/
 *.bak.*
 *.tgz
+
+# DoG run state (project-scoped by design; never committed)
+.omp/dog/
