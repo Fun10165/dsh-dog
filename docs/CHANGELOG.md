@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.3.1-alpha.1 (2026-09-17) — verified on DSH 0.1.6-alpha.1
+
+Retarget to the new DSH minor (`0.1.6-alpha.1`, published 2026-09-15). **No
+plugin source change** — every contract this plugin consumes still resolves:
+`tsc` 0 errors and 43/43 tests against the new packages, then real-host runs on
+the same build.
+
+What the platform moved: all 65 bundles to `0.1.6-alpha.1`; two packages joined
+(`dsh-mcp-resources`, `dsh-workflow-ptc`) and `dsh-workflow-worker-thread` left.
+None of them is on this plugin's surface. Cordis stays `^4.0.2`.
+
+Verified on real `dsh 0.1.6-alpha.1`:
+- Web profile boots; the DoG panel renders the store's graphs with zero console
+  errors and no failed requests; `/api/dog/snapshot` answers 200 (30 graphs).
+- Headless `dog_create → dog_run → dog_status` settled `rootState: success`
+  (leaf revalidated, evidence `bytes: 18`) in 9.0s.
+
+**Upstream defect unchanged in this release**: `ctx.connection.rpc.handle()` is
+byte-identical to 0.1.5, so the debugger keeps using its exact Fetch routes on
+the shared `/api` carrier (see v1.3.0-rc.1 below).
+
+Compatibility note: `0.1.5-rc.2` (`next`) differs from `0.1.5-rc.1` only in
+patch code with an identical dependency surface — this plugin's contracts are
+unchanged there too, but that build was not separately smoke-tested.
+
 ## v1.3.0-rc.1 (2026-09-10) — retarget to the DSH release candidate
 
 DSH `0.1.5-rc.1` (published 2026-09-10, now `latest`/`next`) is API-identical
