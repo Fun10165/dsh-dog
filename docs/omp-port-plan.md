@@ -116,6 +116,11 @@ DoG 的机械判据 + 证据台账在这里是**空位补位**,不是重复造�
 **信任边界(必须说清)**:结算由子代理写,模型自己也能写文件——**"模型伪造结算"原理上防不住**(DSH 版同样如此)。
 上面三条是**绑定**不是防伪;它保证的是"旧字节/别的判据的判决不可能被复用"。
 
+**判据出处(补记,2026-09-17)**:run 记录里原本没有"谁判的"——DSH 版能把活着的 agent 会话绑定进 `goals[].agentSessions[]`,OMP 没有等价 API。
+现在由适配层补上:agentic 内核**采纳结算的那一刻**,往 `<dogRoot>/verifier-bindings/<digest>.json` 写一条采纳记录(request、settlement、verdict、以及结算自报的 verifier id),
+`dog_ledger` 以 `adoption` 字段读出。该字段是**自报**不是认证身份,与结算本身同一信任等级;写失败不影响判决(只表现为"没有采纳记录")。
+证据:`omp-dog/omp/bindings.ts`(读写真值)+ `omp-dog/omp/kernels.ts`(采纳时写入)+ `omp-dog/omp/ledger.ts`(投影);测试 `omp-dog/test/omp-kernels.spec.ts` 的 "records which verifier reported the verdict it adopted" 与 `omp-dog/test/omp-ledger.spec.ts`;变异攻击第 16 条(`omp/bindings.ts` 读取恒返回 undefined)被该测试接住。
+
 **注意(此处曾写错,已按事实更正)**:扩展**不能像模型那样调用 `task` 并同步拿到它的返回值**——`pi`/`ctx` 没有工具调用面(§2.2 的枚举)。
 `outputSchema` 的结构化结果因此回给**发起调用的模型**,而不是判据插件。
 扩展**可以**用 `pi.on("tool_result", …)` 观测每次工具结果(含 `task` 的),但那是**全局中间件**:它按会话事件流工作、只在本次进程内可见,也没法把结果回灌给已经返回的那次工具调用。
