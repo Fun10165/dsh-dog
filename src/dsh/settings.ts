@@ -27,6 +27,12 @@ export interface DogConfig {
  gmDigestAlgo: string
  subagentProvider: string
  subagentMaxDepth: number
+ /** DDoG lifecycle constants; defaults are the omp-dog values. */
+ promotionFailures: number
+ promotionFailureRate: number
+ retirementSuccessRate: number
+ retirementConsistency: number
+ retirementMinRuns: number
 }
 
 /** Loader-validated DoG configuration schema. */
@@ -44,4 +50,9 @@ export const DogConfigSchema: z<DogConfig> = z.object({
  gmDigestAlgo: z.string().default('sha256'),
  subagentProvider: z.string().default('spawn'),
  subagentMaxDepth: z.natural().default(3),
+ promotionFailures: z.natural().min(0).default(2),
+ promotionFailureRate: z.number().min(0).max(1).default(0.2),
+ retirementSuccessRate: z.number().min(0).max(1).default(0.9),
+ retirementConsistency: z.number().min(0).max(1).default(0.8),
+ retirementMinRuns: z.natural().min(1).default(5),
 })

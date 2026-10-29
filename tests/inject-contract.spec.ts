@@ -103,7 +103,16 @@ describe('Cordis inject contract', () => {
 
   await app.plugin(
    { name: dog.name, inject: dog.inject, Config: dog.Config, apply: dog.apply },
-   { ...mkConfig(root, join(root, 'scripts')), subagentProvider: 'spawn', subagentMaxDepth: 3 },
+   {
+    ...mkConfig(root, join(root, 'scripts')),
+    subagentProvider: 'spawn',
+    subagentMaxDepth: 3,
+    promotionFailures: 2,
+    promotionFailureRate: 0.2,
+    retirementSuccessRate: 0.9,
+    retirementConsistency: 0.8,
+    retirementMinRuns: 5,
+   },
   )
 
   const call = async (name: string, args: unknown): Promise<Record<string, unknown>> => {

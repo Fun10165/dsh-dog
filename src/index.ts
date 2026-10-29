@@ -42,5 +42,12 @@ export {
  createDogTools,
 } from './dsh/tools.ts'
 export type { DogAgentLauncher, DogSessionFacts } from './dsh/tools.ts'
+export { DDOG_EXPAND_TOOL, DDOG_INIT_TOOL, DDOG_RUN_TOOL, DDOG_STATUS_TOOL, createDdogTools } from './dsh/ddog-tools.ts'
+export type { DdogToolDeps } from './dsh/ddog-tools.ts'
+export { DEFAULT_DDOG_THRESHOLDS, verdictStats } from './core/ddog-lifecycle.ts'
+export type { DdogThresholds } from './core/ddog-lifecycle.ts'
+export { parseDdogGraph, DDOG_SCHEMA_VERSION } from './core/ddog-model.ts'
+export type { DdogGraph, DdogNode } from './core/ddog-model.ts'
+export { DdogStore } from './core/ddog-store.ts'
 export { DogConfigSchema } from './dsh/settings.ts'
 export type { DogConfig } from './dsh/settings.ts'

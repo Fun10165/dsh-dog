@@ -54,7 +54,7 @@
 ## 5. 结算与失败语义(保留)
 - 叶子 state:pass→success / fail→failure / inconclusive→needs_human。
 - composite:completion AST + contains(fatal/tolerable/degrade)结算;**整体断言的结果并入该节点最终状态**(断言被跳过/无法判 = 按 inconclusive 处理)。
-- 根(hard):success/failure/partial_success(仅 allowPartialRoot)/needs_replan/infeasible/cancelled。
+- 根(hard):success/failure/partial_success(仅 allowPartialRoot)/needs_replan/cancelled。
 ## 6. 增量与继承
 - 判定锚点 = **对象捕获 hash + 判据身份(脚本名+脚本文件自身 hash / instruction 全文 hash)**。
 - 双匹配且 prior 同契约 → `inherited`;否则重验。

@@ -24,7 +24,7 @@ The implementation must preserve these invariants:
 4. A verifier never accepts a path, command, verifier name, or grounding material selected by the producer of the input or by a model-authored evidence object. Grounding material is extracted by host-registered trusted extractors.
 5. Every successful verification is bound to an immutable captured input, a verifier contract version, and a grounding-material digest. A later input version inherits an earlier pass only if a programmatic extractor proves the grounding material and contract are unchanged.
 6. The root goal is always a hard constraint. Hard constraints are not compensable by soft-goal scores; an explicitly allowed `partial_success` remains distinct from `success`.
-7. Root execution has honest terminal states, including `failure`, `infeasible`, `cancelled`, and `needs_replan`; the engine never fabricates success or waits forever for an impossible goal.
+7. Root execution has honest terminal states, including `failure`, `cancelled`, and `needs_replan`; the engine never fabricates success or waits forever for an impossible goal.
 8. Boolean completion expressions are parsed and type-checked into a restricted AST. No `eval`, dynamic import, shell command, or arbitrary expression interpreter is allowed.
 9. Human review is a normal terminal/control transition, not an exception hidden inside a retry loop.
 10. Runtime context is diagnostic metadata, never verifier evidence. Failure to persist it may emit a bounded warning but cannot convert a failed verification into a pass or a pass into a failure.
@@ -310,7 +310,6 @@ Runtime-event persistence is explicitly outside the acceptance boundary: trusted
 - `success`: the restricted root completion expression is true and every required parent relation succeeds directly or through its declared degradation target.
 - `partial_success`: the root is `partial` and deployment explicitly sets `allowPartialRoot`; v0.2 has no independent soft-score threshold.
 - `failure`: a non-tolerable required relation fails, the root completion expression settles false under fatal policy, or partial root delivery is disabled.
-- `infeasible`: the declared conditions cannot be met under available artifacts or capabilities.
 - `needs_replan`: the verification contract must change (requirement, evidence schema, grounding extractor, or graph) before verification can continue. This is a contract adjustment signal, not a development-plan rework signal.
 - `cancelled`: human or policy ended execution; partial records remain inspectable.
 
@@ -423,7 +422,32 @@ Verifier binding semantics: a verifier worker is bound to its goal as role `veri
 
 The plugin exports `name`, `Config`, `inject`, and `apply` according to the DSH loader contract. `apply` registers effects with disposers and fails loudly for invalid configuration or missing required services.
 
-The web profile registers a client bundle in the shipped `shell.overlay` slot and a trusted-host channel on the shared DSH Connection RPC. The compact `snapshot` endpoint returns a schema-validated projection of persisted graph revisions and runs; the lazy `goal-runtime` endpoint returns one bounded per-goal trace only after node selection. Neither endpoint returns captured bytes, prompts, raw session transcripts, or credentials. The client polls the compact snapshot, renders containment and dependency edges, exposes node contracts, live runtime activity, structured failure reasons, and trusted verifier evidence, and can ask the canonical DSH sessions service to open the invoking session. It is intentionally read-only: graph mutation and execution remain model/CLI-side.
+The web profile registers a client bundle in the shipped `shell.overlay` slot and a trusted-host channel on the shared DSH Connection RPC. The compact `snapshot` endpoint returns a schema-validated projection of persisted graph revisions and runs; the lazy `goal-runtime` endpoint returns one bounded per-goal trace only after node selection. Neither endpoint returns captured bytes, prompts, raw session transcripts, or credentials. The client polls the compact snapshot, renders containment and dependency edges, exposes node contracts, live runtime activity, structured failure reasons, and trusted verifier evidence, and can load the invoking session through the sessions service (view selection belongs to the view owner in harness 0.2). It is intentionally read-only: graph mutation and execution remain model/CLI-side.
+
+## 12.1 DDoG surface
+
+DDoG is the dynamic counterpart of the static graph: it starts from one root definition and grows only where real failures show the graph is missing something. It shares the engine's judgment kernels but has its own model, storage, and lifecycle; a DDoG graph is not a v0.9 graph and never enters `dog_create`.
+
+Storage is project-scoped: `<project>/.dsh/ddog/graph.json`, with each session's submission under `<project>/.dsh/ddog/sessions/`. Deleting that directory starts a new graph.
+
+The host registers four tools:
+
+- `ddog_init`: one session turns the user instruction into a single-sentence root definition, checked for one sentence, a defining predicate, at least twenty characters, and a fragment shared with the instruction; one retry on rejection, then failure. Refuses when the project already has a graph.
+- `ddog_expand`: one session proposes candidate children under a node from numbered real examples. Every candidate names the inner meaning it carries, cites the example line that triggered it, and a parent chain that reaches the expanded node. Expanding the root also records which candidates cover each root conjunct.
+- `ddog_run`: judges one deliverable. Targets are the root and every formal node; each target runs one session that judges the target, its direct candidates, and its retired children, and may propose candidates for failure modes nothing covers. Ordinary and retired children are never scheduled as their own sessions.
+- `ddog_status`: reads the graph back with node counts, slot coverage, and every node state.
+
+Lifecycle transitions belong to the runtime, never to a judging session:
+
+| Transition | Default condition |
+| --- | --- |
+| candidate → formal | more than 2 decisive failures and a failure rate above 0.2 |
+| formal → retirement evaluation | a decisive pass rate above 0.9 |
+| retirement evaluation → retired | cross-entropy agreement above 0.8 over at least 5 paired decisive judgments of the child's past failures |
+
+The parent's verdicts on those past failures are the paired side; a round with too few decisive pairs leaves the node unchanged. Every threshold is configuration, and the defaults above are the omp-dog values. A judgment that cannot settle is recorded as undecided and never moves a node.
+
+Sessions deliver results by writing a JSON submission to an absolute path supplied in the prompt; the host parses it strictly, returns the problems to a second attempt when the shape is wrong, and writes the graph only after acceptance.
 
 ## 13. Configuration
 
@@ -441,6 +465,11 @@ revalidateThreshold: 0.3        # ratio of leaves re-run before warning the deve
 gmDigestAlgo: "sha256"
 subagentProvider: "spawn"       # provider that establishes verifier/delegate child sessions
 subagentMaxDepth: 3             # delegation-depth cap for those children
+promotionFailures: 2            # DDoG: decisive failures needed to promote a candidate
+promotionFailureRate: 0.2      # DDoG: failure rate that must accompany them
+retirementSuccessRate: 0.9     # DDoG: pass rate that starts retirement evaluation
+retirementConsistency: 0.8     # DDoG: cross-entropy agreement needed to retire
+retirementMinRuns: 5           # DDoG: paired decisive judgments needed to settle retirement
 ```
 
 `workspaceRoot` is host-authored configuration, validated at plugin load, and is the only source of target paths. No model-authored graph can override it with absolute or escaping paths. A future permission integration may add user approval for new roots; v0.2 rejects them.

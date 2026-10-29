@@ -230,7 +230,6 @@ export type RootTerminalState =
  | 'success'
  | 'partial_success'
  | 'failure'
- | 'infeasible'
  | 'needs_replan'
  | 'cancelled'
 

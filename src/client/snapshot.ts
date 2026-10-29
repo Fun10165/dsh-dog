@@ -25,7 +25,7 @@ const GOAL_STATES = new Set<GoalState>([
   'cancelled', 'invalidated', 'partial', 'inherited',
 ])
 const ROOT_STATES = new Set<RootTerminalState>([
-  'success', 'partial_success', 'failure', 'infeasible', 'needs_replan', 'cancelled',
+  'success', 'partial_success', 'failure', 'needs_replan', 'cancelled',
 ])
 const GOAL_AGENT_ROLES = new Set<GoalAgentRole>(['orchestrator', 'verifier', 'reviewer'])
 const RUNTIME_PHASES = new Set<GoalRuntimeEvent['phase']>([

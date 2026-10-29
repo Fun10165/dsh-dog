@@ -27,6 +27,8 @@ import { registerDogDebugRoutes } from './debug.ts'
 import { DogConfigSchema, type DogConfig } from './settings.ts'
 import { installInterruptedTurnCapture } from './telemetry.ts'
 import { createDogDelegateAgentTool, createDogTools, type DogSessionFacts } from './tools.ts'
+import { createDdogSessionRunner } from './ddog-session.ts'
+import { createDdogTools } from './ddog-tools.ts'
 
 /** Cordis plugin name. */
 export const name = 'dsh-dog'
@@ -119,6 +121,25 @@ export async function apply(ctx: Context, config: DogConfig): Promise<void> {
   )
   agenticHandle = handle
   subagentCtx.effect(() => subagentCtx.tools.register(createDogDelegateAgentTool(getEngine, handle.delegate)))
+  const ddogRunner = createDdogSessionRunner({
+   subagents: subagentCtx.subagents,
+   provider: () => config.subagentProvider,
+   maxDepth: () => config.subagentMaxDepth,
+  })
+  for (const tool of createDdogTools({
+   sessions: sessionFacts,
+   runner: () => ddogRunner,
+   thresholds: () => ({
+    promotionFailures: config.promotionFailures,
+    promotionFailureRate: config.promotionFailureRate,
+    retirementSuccessRate: config.retirementSuccessRate,
+    retirementConsistency: config.retirementConsistency,
+    retirementMinRuns: config.retirementMinRuns,
+   }),
+   now: () => new Date().toISOString(),
+  })) {
+   subagentCtx.effect(() => subagentCtx.tools.register(tool))
+  }
  })
  installInterruptedTurnCapture(ctx, repository)
  // Browser-facing transport is optional: a composition without Connection

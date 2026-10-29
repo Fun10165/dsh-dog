@@ -224,7 +224,7 @@ export const DOG_DEBUG_CSS = String.raw`
 .dog-state-running { --dog-state-color: #3c7fe1; }
 .dog-state-pending, .dog-state-created { --dog-state-color: #8c859f; }
 .dog-state-partial_success { --dog-state-color: #b88a22; }
-.dog-state-infeasible, .dog-state-needs_replan { --dog-state-color: #d18135; }
+.dog-state-needs_replan { --dog-state-color: #d18135; }
 .dog-root-orb { background: var(--dog-state-color); box-shadow: 0 7px 18px color-mix(in srgb, var(--dog-state-color) 26%, transparent); }
 @keyframes dog-fade-in { from { opacity: 0; } }
 @keyframes dog-dialog-in { from { opacity: 0; transform: translateY(8px) scale(.992); } }

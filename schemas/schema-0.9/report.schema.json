@@ -11,7 +11,7 @@
     "graphId": { "type": "string", "minLength": 1 },
     "graphDigest": { "$ref": "#/$defs/sha256" },
     "rootState": {
-      "enum": ["success", "partial_success", "failure", "infeasible", "needs_replan", "cancelled", "running"]
+      "enum": ["success", "partial_success", "failure", "needs_replan", "cancelled", "running"]
     },
     "goals": {
       "type": "array",

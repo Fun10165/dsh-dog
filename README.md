@@ -94,6 +94,8 @@ dsh web            # web UI: graph debugger panel + tools
 dsh --profile headless "Create a DoG for article.md, run it, then read its status."
 ```
 
+Dynamic DoG (DDoG) starts from one root definition and grows candidates from real failures: `ddog_init` → `ddog_expand` → `ddog_run` → `ddog_status`. Its graph lives in the project at `.dsh/ddog/`; thresholds are configuration with the omp-dog defaults. See [SPEC §12.1](SPEC.md).
+
 The **DoG debugger** panel shows immutable graph revisions, run history, containment/dependency edges (arrow = execution order), failure propagation, per-goal runtime traces, and verifier evidence — read-only, never exposing artifact bytes.
 
 ## Agentic CI skill
@@ -106,8 +108,8 @@ cp docs/skills/dog-v02-agentic-ci/SKILL.md ~/.dsh/skills/dog-v02-agentic-ci/SKIL
 
 ## Repository layout
 
-- [`src/core/`](src/core) — **Harness-free domain**: `graph.ts` (schema/validation), `engine.ts` (capture, scheduling, propagation, inheritance), `verifiers.ts` (two kernels), `storage.ts` (content-addressed store), `debug.ts` (read-only projections), `workspace.ts`, `lockfile.ts`, `logic.ts`, `model.ts`, `schema.ts`, `json.ts`, `verifier-file.ts`.
-- [`src/dsh/`](src/dsh) — **the only DSH-facing layer**: `plugin.ts` (Cordis entry, config, service wiring), `settings.ts` (`dog` namespace), `tools.ts` (model-facing tools), `agentic.ts` (verifier subagents), `telemetry.ts` (interrupted-turn capture), `debug.ts` (Fetch routes).
+- [`src/core/`](src/core) — **Harness-free domain**: `graph.ts` (schema/validation), `engine.ts` (capture, scheduling, propagation, inheritance), `verifiers.ts` (two kernels), `storage.ts` (content-addressed store), `debug.ts` (read-only projections), `workspace.ts`, `lockfile.ts`, `logic.ts`, `model.ts`, `schema.ts`, `json.ts`, `verifier-file.ts`, `ddog-model.ts` / `ddog-lifecycle.ts` / `ddog-definition.ts` / `ddog-store.ts` (dynamic DoG).
+- [`src/dsh/`](src/dsh) — **the only DSH-facing layer**: `plugin.ts` (Cordis entry, config, service wiring), `settings.ts` (`dog` namespace), `tools.ts` (model-facing tools), `ddog-tools.ts` / `ddog-session.ts` / `ddog-prompts.ts` / `ddog-submissions.ts` (dynamic DoG surface), `agentic.ts` (verifier subagents), `telemetry.ts` (interrupted-turn capture), `debug.ts` (Fetch routes).
 - [`src/client/`](src/client) — browser half: overlay debugger (`DogDebugger.tsx`), snapshot parsing, graph layout, styles, session navigation.
 - [`src/shared/`](src/shared) — zero-dependency constants both halves agree on (`protocol.ts`).
 - [`schemas/`](schemas/schema-0.2) — JSON schemas (graph/run/verification/runtime-event/report).
