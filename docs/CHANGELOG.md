@@ -2,6 +2,16 @@
 
 ## v1.4.0-alpha.1 (2026-10-29) — DSH 0.2.2-alpha.2, with DDoG
 
+Peer ranges accept any 0.2.x harness (`>=0.2.1-0 <0.3.0-0`) because the
+desktop app still ships `0.2.1-rc.3`. That build exposes the same surfaces this
+release migrated to — `startActivation` with `delivery`, `drainChildren`,
+`configure`, `SessionId` job owners, `sessionStatus` — so the same source runs
+on both. Verified by a full real smoke on `dsh 0.2.1-rc.3` + `dsh-headless`:
+`ddog_init`, `ddog_expand`, `ddog_run`, `ddog_status` all worked, producing 13
+nodes (1 root, 12 candidates) with 5 covered root slots and six judged level-1
+candidates; root verdict `fail`. The desktop nightly feed's newest build is
+`0.2.1-rc.3` itself, so there is no newer app to upgrade to yet.
+
 Retarget to `0.2.2-alpha.2` and add the dynamic DoG surface.
 
 Platform breakage this release absorbs (all fixed in source):
