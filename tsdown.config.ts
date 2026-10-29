@@ -3,7 +3,7 @@ import type { UserConfig } from 'tsdown'
 const node: UserConfig = {
   entry: {
     index: 'src/index.ts',
-    core: 'src/core/engine.ts',
+    core: 'src/core/index.ts',
   },
   outDir: 'lib',
   format: ['esm'],
