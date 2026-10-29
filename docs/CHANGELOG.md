@@ -2,6 +2,15 @@
 
 ## v1.4.0-alpha.1 (2026-10-29) — DSH 0.2.2-alpha.2, with DDoG
 
+Manifest: `engines.dsh` declares the supported harness range
+(`>=0.2.1-0 <0.3.0-0`), so installation and startup judge this bundle by the
+official rule instead of falling back to peer ranges; `repository`, `homepage`,
+and `bugs` point at the GitHub project. `dsh.bundle` and `dsh.client`
+(`platform: web`, `inject`) were already present and match the official
+declaration used by `@deepseek-ai/dsh-client-modules`. Keywords, GitHub topics,
+and `dsh.catalog` are third-party market conventions, not DeepSeek manifest
+keys, so none is declared.
+
 Peer ranges accept any 0.2.x harness (`>=0.2.1-0 <0.3.0-0`) because the
 desktop app still ships `0.2.1-rc.3`. That build exposes the same surfaces this
 release migrated to — `startActivation` with `delivery`, `drainChildren`,

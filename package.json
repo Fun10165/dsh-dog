@@ -26,6 +26,10 @@
     "SPEC.md",
     "cordis.patch.yml"
   ],
+  "engines": {
+    "dsh": ">=0.2.1-0 <0.3.0-0",
+    "node": ">=22"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
@@ -45,6 +49,14 @@
       ],
       "platform": "web"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fun10165/dsh-dog.git"
+  },
+  "homepage": "https://github.com/Fun10165/dsh-dog#readme",
+  "bugs": {
+    "url": "https://github.com/Fun10165/dsh-dog/issues"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.5-0 <4.1.0-0",
@@ -84,10 +96,10 @@
     "typescript": "^5.9.3",
     "vitest": "^4.1.1"
   },
-  "license": "BSD-3-Clause",
   "dependencies": {
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "react": "^18.3.1"
-  }
+  },
+  "license": "BSD-3-Clause"
 }
