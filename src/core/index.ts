@@ -17,4 +17,32 @@ export { DogRepository } from './storage.ts'
 export type { CapturedInputFile } from './storage.ts'
 export { runPlan, type AgenticRunner, type ProgrammaticRunner, type Verdict } from './verifiers.ts'
 export { WorkspaceManager } from './workspace.ts'
+export {
+  createRootGraph,
+  DDOG_SCHEMA_VERSION,
+  parseDdogGraph,
+} from './ddog-model.ts'
+export type {
+  CandidateState,
+  DdogGraph,
+  DdogNode,
+  DdogVerdict,
+  FormalState,
+  Observation,
+  RootSlot,
+} from './ddog-model.ts'
+export {
+  applyObservation,
+  applyRetirement,
+  appendNewCandidates,
+  DEFAULT_DDOG_THRESHOLDS,
+  retirementCases,
+  retirementConsistency,
+  shouldPromote,
+  shouldStartRetirement,
+  verdictStats,
+} from './ddog-lifecycle.ts'
+export type { DdogThresholds, VerdictStats } from './ddog-lifecycle.ts'
+export { definitionProblems, isOneSentence, sharedSubstring } from './ddog-definition.ts'
+export { DdogStore } from './ddog-store.ts'
 export type * from './model.ts'

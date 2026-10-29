@@ -22,6 +22,20 @@ describe('core surface', () => {
 		expect(typeof core.sha256Json).toBe('function')
 	})
 
+	it('exports the dynamic DoG model, lifecycle, and store', () => {
+		expect(core.DDOG_SCHEMA_VERSION).toBe('0.1')
+		expect(typeof core.DdogStore).toBe('function')
+		expect(typeof core.parseDdogGraph).toBe('function')
+		expect(typeof core.applyObservation).toBe('function')
+		expect(core.DEFAULT_DDOG_THRESHOLDS).toEqual({
+			promotionFailures: 2,
+			promotionFailureRate: 0.2,
+			retirementSuccessRate: 0.9,
+			retirementConsistency: 0.8,
+			retirementMinRuns: 5,
+		})
+	})
+
 	it('does not pull the Cordis plugin half', () => {
 		expect('apply' in core).toBe(false)
 		expect('registerDogDebugRoutes' in core).toBe(false)

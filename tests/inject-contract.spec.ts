@@ -122,6 +122,12 @@ describe('Cordis inject contract', () => {
    return value as Record<string, unknown>
   }
 
+  // The DDoG surface is registered only inside the subagents injection; its
+  // presence proves that wiring, not just the static tool list.
+  expect(registered.map(definition => definition.name)).toEqual(expect.arrayContaining([
+   'ddog_init', 'ddog_expand', 'ddog_run', 'ddog_status',
+  ]))
+
   const created = await call(DOG_CREATE_TOOL, {
    graph: {
     schemaVersion: '0.9',
