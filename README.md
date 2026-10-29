@@ -76,7 +76,7 @@ dsh plugin --profile web add "$PWD"
 dsh plugin --profile headless add "$PWD"
 ```
 
-Configure **once, user-level**, in `~/.dsh/settings.yaml` under `dog:` (shared by every profile; agents must never edit it):
+Configure the plugin entry (harness 0.2 also derives a form from this schema; an older `dog:` section in `~/.dsh/settings.yaml` is imported once):
 
 ```yaml
 dog:

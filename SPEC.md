@@ -474,7 +474,7 @@ retirementMinRuns: 5           # DDoG: paired decisive judgments needed to settl
 
 `workspaceRoot` is host-authored configuration, validated at plugin load, and is the only source of target paths. No model-authored graph can override it with absolute or escaping paths. A future permission integration may add user approval for new roots; v0.2 rejects them.
 
-In the running DSH installation this configuration is supplied by the user-level settings namespace `dog:` (`~/.dsh/settings.yaml`), shared by every profile that loads the plugin; profile patches never carry `dsh-dog` configuration. The plugin remains operable when no settings service is attached, falling back to its composition entry defaults.
+This configuration is the plugin's Config in the profile entry. Harness 0.2 derives a settings form from that schema, and a `dog:` section left in an older `~/.dsh/settings.yaml` is imported once into the profile entry. The plugin remains operable without a settings service.
 
 ## 14. Security and failure policy
 

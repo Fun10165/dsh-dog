@@ -9,3 +9,5 @@ lib/
 
 # DoG run state (project-scoped by design; never committed)
 .omp/dog/
+.dsh/
+.work/

@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.4.0-alpha.1 (2026-10-29) — DSH 0.2.2-alpha.2, with DDoG
+
+Retarget to `0.2.2-alpha.2` and add the dynamic DoG surface.
+
+Platform breakage this release absorbs (all fixed in source):
+`startContinuable` → `startActivation` with an explicit `delivery` policy;
+`drainContinuableChildren` → `drainChildren`; `JobSpec.owner` narrows to a
+session id; `SettingsForms.installSection` is gone (forms derive from the
+plugin's declared Config, and the Loader already merges profile overrides, so
+the plugin reads its entry config directly); the client loses
+`ISessions.open/openSubagent/refreshSubagents`, `list.current`, and
+`uiSession.pendingInteractions` in favour of `retain`/`using`,
+`refreshProjections`, and the per-session `sessionStatus`.
+
+Harness 0.2 exposes no public "switch the main view" call — selection belongs
+to the view owner — so the debugger's session action now loads and retains the
+session instead of navigating to it. `cordis` and `schemastery` move to
+`4.0.6-alpha.1` / `3.18.6-alpha.1` to match the package peers; on `4.0.5` the
+Loader cannot commit volatile config, so `settings.describe().value` is empty.
+
+DDoG (SPEC §12.1): `ddog_init` writes a one-sentence root definition behind a
+definition gate with one corrective retry; `ddog_expand` turns numbered examples
+into candidates with root-slot coverage; `ddog_run` judges the root plus every
+formal node, with each target's session also judging its direct candidates and
+retired children; `ddog_status` reads the graph back. Promotion, retirement
+start, and retirement settlement are pure lifecycle functions with configurable
+thresholds defaulting to the omp-dog values. The graph lives in the project at
+`.dsh/ddog/`. The extra `infeasible` root state is removed so the terminal set
+matches omp-dog.
+
+Verified: `tsc` 0 errors; 64/64 tests; `lib/core.js` exports the DDoG model,
+lifecycle, and store by name. Real headless run on `dsh 0.2.2-alpha.2`
+(`deepseek-flash`, isolated `DSH_HOME`): `ddog_init` rejected the first
+definition for carrying more than one sentence and succeeded on the retry;
+`ddog_expand` produced 9 candidates covering all 4 root slots; `ddog_run`
+returned root verdict `fail`; `ddog_status` reported 1 root + 9 candidates with
+direct children carrying one judgment each and deeper children none. Whole task
+took 7m33s.
+
 ## v1.3.1-alpha.1 (2026-09-17) — verified on DSH 0.1.6-alpha.1
 
 Retarget to the new DSH minor (`0.1.6-alpha.1`, published 2026-09-15). **No
