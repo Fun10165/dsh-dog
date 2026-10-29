@@ -47,7 +47,7 @@
 
   <rect x="420" y="204" width="540" height="44" rx="9" fill="#3f7fd1" />
   <text x="690" y="224" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Schema 层(程序)</text>
-  <text x="690" y="240" font-size="11" fill="#dbe9f8" text-anchor="middle">schemas/schema-0.2/*.json — 载荷校验,失败即拒</text>
+  <text x="690" y="240" font-size="11" fill="#dbe9f8" text-anchor="middle">schemas/schema-0.9/*.json — 载荷校验,失败即拒</text>
 
   <rect x="420" y="268" width="540" height="44" rx="9" fill="#3f7fd1" />
   <text x="690" y="288" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">编译器(程序)</text>

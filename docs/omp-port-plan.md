@@ -159,7 +159,7 @@ DoG 的机械判据 + 证据台账在这里是**空位补位**,不是重复造�
   omp/dispatch.ts     派发前置检查(镜像引擎的继承锚点)
   omp/panel.ts        状态行/widget/报告投影
   core/*.ts           原样搬运的 12 个核心文件(3071 行)
-  schemas/schema-0.2/ 5 个 JSON Schema(ajv 校验层)
+  schemas/schema-0.9/ 5 个 JSON Schema(ajv 校验层)
   scripts/*.js        判据脚本库(file-non-empty / slop-phrases)
   agents/dog-verifier.md   只读判据子代理定义
   skills/dog-acceptance-gates/SKILL.md   产品手册(另装为托管 skill)

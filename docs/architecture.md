@@ -29,7 +29,7 @@
 - **外部 — 验收侧**:项目负责人。始终拥有目标并确认图。
 - **DoG 核心(DSH 插件)**:
   - **工具面**(`dog_validate`、`dog_create`、`dog_run`、`dog_status`、`dog_bind_agent`、`dog_delegate_agent`)— 程序;
-  - **Schema 层** — 五个 `schemas/schema-0.2/*.json` 契约。任何载荷在解析或持久化前先在这里校验;
+  - **Schema 层** — 五个 `schemas/schema-0.9/*.json` 契约。任何载荷在解析或持久化前先在这里校验;
   - **编译器**(图解析 + 静态规则,含纯程序化子树规则、验收计划编译、验证契约解析)— 程序;
   - **调度器**(依赖门禁、隔离工作区池、增量选择)— 程序;
   - **验证执行**:

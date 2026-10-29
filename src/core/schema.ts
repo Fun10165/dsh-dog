@@ -15,7 +15,7 @@ export interface SchemaSet {
  readonly validateReport: ValidateFunction
 }
 
-/** Load the five normative schemas from schemas/schema-0.2 (checked into the package root). */
+/** Load the five normative schemas from schemas/schema-0.9 (checked into the package root). */
 export async function loadSchemaSet(): Promise<SchemaSet> {
  const schemasDir = locateSchemasDirectory()
  const ajv = new Ajv2020({ allErrors: true, strict: false })
@@ -32,18 +32,18 @@ export async function loadSchemaSet(): Promise<SchemaSet> {
 }
 
 /**
- * Resolve `schemas/schema-0.2` by walking up from this module, so the same
+ * Resolve `schemas/schema-0.9` by walking up from this module, so the same
  * code works from `src/core/` (tests) and from the bundled `lib/index.js`
  * (installed package) without a depth-sensitive relative path.
  */
 function locateSchemasDirectory(): string {
  let directory = fileURLToPath(new URL('.', import.meta.url))
  for (let depth = 0; depth < 5; depth += 1) {
-  const candidate = join(directory, 'schemas', 'schema-0.2')
+  const candidate = join(directory, 'schemas', 'schema-0.9')
   if (existsSync(candidate)) return candidate
   directory = dirname(directory)
  }
- throw new Error('schemas/schema-0.2 was not found beside the package root')
+ throw new Error('schemas/schema-0.9 was not found beside the package root')
 }
 
 /** Format ajv errors into one-line messages with instance paths. */

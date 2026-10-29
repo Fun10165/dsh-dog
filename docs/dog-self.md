@@ -15,7 +15,7 @@
 | R3 | **引擎时序正确**:engine 惰性构造(首次工具调用时才建),保证 settings attach 后 bindings 已决;不得再在 attach 前构造出空绑定 | 本次修复的根因(unknown host artifact binding deck 两连) |
 | R4 | **验证三态与证据绑定**:pass/fail/inconclusive 必须带 observation 证据;无证据 → inconclusive → needs_human | DoG v0.2 语义 |
 | R5 | **确定性检查用程序化,主观/视觉用 agentic,其余 human in the loop**;建图者与验证者分离,验证者上下文隔离(干净 session,只读 artifact + 写 settlement) | DoG 信任边界 |
-| R6 | **图结构纪律**:root 必须 hard;leaf 必须有 verifier;composite 不能有 verifier;completion AST 仅 `ref/all/any/not/atLeast`;未知字段(含 `merge`)拒绝;每个 composite 至少一个非程序化后代 | schema-0.2 规则 |
+| R6 | **图结构纪律**:root 必须 hard;leaf 必须有 verifier;composite 不能有 verifier;completion AST 仅 `ref/all/any/not/atLeast`;未知字段(含 `merge`)拒绝;每个 composite 至少一个非程序化后代 | schema-0.9 规则 |
 | R7 | **增量语义**:程序化叶子 GM 摘要+契约版本双匹配才 `inherited`;agentic 永远重跑 | DoG v0.2 增量 |
 | R8 | **失败传播**:tolerable→partial、fatal→failure、degrade→兄弟替代;根节点不允许失败 → 根失败必须 human in the loop | 用户设计决策 |
 | R9 | **命名语义化**:宿主 binding id、goal id 等命名要向作者/用户可解释(如 `deck` = xpipeann-deck.pptx 需在设置/文档中明示对应文件) | 用户对「deck 是什么」的质疑 |
