@@ -8,7 +8,7 @@ import type { } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { } from '@deepseek-ai/dsh-client-ui-session/client'
 import { DOG_DEBUG_SNAPSHOT_PATH, DOG_RUNTIME_TRACE_PATH } from '../shared/protocol.ts'
 import { DogDebugger } from './DogDebugger.tsx'
-import { openInvocationSession } from './sessionNavigation.ts'
+import { loadInvocationSession } from './sessionNavigation.ts'
 import { DOG_DEBUG_CSS, DOG_DEBUG_STYLE_ID } from './styles.ts'
 
 /** The overlay uses the shared `/api` carrier and the canonical session navigator. */
@@ -21,7 +21,7 @@ export function apply(ctx: Context): void {
   // once here: this half runs in a client Context, and the declared `inject`
   // guarantees the service below is present.
   const sessions = ctx.get('sessions') as unknown as ISessions
-  const pendingInteractions = ctx.uiSession.pendingInteractions
+  const sessionStatus = ctx.uiSession.sessionStatus
   // Same-origin POST to the Host's exact Fetch routes; the `/api` carrier has
   // already applied its Host/Origin fence and browser authentication.
   const call = async (path: string, payload: unknown, signal?: AbortSignal): Promise<unknown> => {
@@ -36,16 +36,16 @@ export function apply(ctx: Context): void {
     return await response.json()
   }
   const openSession = (sessionId: string, parentSessionId?: string): Promise<boolean> =>
-    openInvocationSession(sessions, sessionId, parentSessionId)
+    loadInvocationSession(sessions, sessionId, parentSessionId)
   const DogDebuggerHost = (): JSX.Element => <DogDebugger
     readSnapshot={signal => call(DOG_DEBUG_SNAPSHOT_PATH, {}, signal)}
     readGoalRuntime={(runId, goalId, signal) => call(DOG_RUNTIME_TRACE_PATH, { runId, goalId }, signal)}
     openSession={openSession}
     getSessionState={() => sessions.list.getSnapshot()}
     subscribeSessions={listener => sessions.list.subscribe(listener)}
-    getPendingInteractions={() => pendingInteractions.getSnapshot()}
-    subscribePendingInteractions={listener => pendingInteractions.subscribe(listener)}
-    refreshAgentCatalog={parentSessionId => sessions.refreshSubagents(parentSessionId as SessionId)}
+    getPendingInteractions={() => sessionStatus.getSnapshot()}
+    subscribePendingInteractions={listener => sessionStatus.subscribe(listener)}
+    refreshAgentCatalog={parentSessionId => sessions.refreshProjections(parentSessionId as SessionId)}
   />
   ctx.effect(installStyles, 'dog-debugger: styles')
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({

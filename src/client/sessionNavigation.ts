@@ -1,74 +1,64 @@
-/** Reliable navigation from persisted DoG invocation metadata into the canonical DSH session stage. */
+/**
+ * Load a persisted DoG invocation session in the client.
+ *
+ * Harness 0.2 removed view navigation from the sessions service: the catalog
+ * belongs to the Controller, and which Session the main view shows belongs to
+ * the view owner. What remains public is the object layer — resolve the target,
+ * then retain it so the client starts its shared history opening. This module
+ * therefore loads a session rather than switching the main view.
+ */
 
-import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { ISessions, SessionReference, SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
-const DEFAULT_SELECTION_TIMEOUT_MS = 2_000
-
-type SessionNavigator = Pick<
- ISessions,
- 'list' | 'open' | 'openSubagent' | 'subagentAddress' | 'refreshSubagents'
->
-
-/**
- * Select a persisted invocation session and confirm that DSH actually staged it.
- * Returns false only when neither the ordinary session list nor a refreshed
- * direct-parent catalog can address the target.
- */
-export async function openInvocationSession(
- sessions: SessionNavigator,
- rawSessionId: string,
- rawParentSessionId?: string,
- timeoutMs = DEFAULT_SELECTION_TIMEOUT_MS,
-): Promise<boolean> {
- const sessionId = rawSessionId as SessionId
- if (sessions.list.getSnapshot().current === sessionId) return true
-
- if (sessions.list.getSnapshot().ids.includes(sessionId)) {
-  await selectAndConfirm(sessions, sessionId, () => sessions.open(sessionId), timeoutMs)
-  return true
+declare module '@deepseek-ai/dsh-api-session-controller/client' {
+ interface SessionReferenceSourceMap {
+  dogDebugger: unknown
  }
-
- let address = sessions.subagentAddress(sessionId)
- if (address === undefined && rawParentSessionId !== undefined) {
-  await sessions.refreshSubagents(rawParentSessionId as SessionId)
-  address = sessions.subagentAddress(sessionId)
- }
- if (address === undefined) return false
-
- await selectAndConfirm(sessions, sessionId, () => sessions.openSubagent(address), timeoutMs)
- return true
 }
 
-async function selectAndConfirm(
- sessions: SessionNavigator,
+/**
+ * Resolve a persisted invocation session and start opening it.
+ *
+ * @param sessions - client sessions service.
+ * @param rawSessionId - the Agent session recorded on the DoG binding.
+ * @param rawParentSessionId - the parent whose catalog holds a subagent child.
+ * @returns true when the harness knows the session and its history opened.
+ */
+export async function loadInvocationSession(
+ sessions: ISessions,
+ rawSessionId: string,
+ rawParentSessionId?: string,
+): Promise<boolean> {
+ const sessionId = rawSessionId as SessionId
+ const target = await resolveTarget(sessions, sessionId, rawParentSessionId)
+ if (target === undefined) return false
+ const reference: SessionReference = sessions.retain(target, { source: 'dogDebugger' })
+ try {
+  await reference.ready
+  return true
+ } catch {
+  return false
+ } finally {
+  reference.release()
+ }
+}
+
+/** Catalog membership first; a direct-parent catalog supplies subagent children. */
+async function resolveTarget(
+ sessions: ISessions,
  sessionId: SessionId,
- select: () => void,
- timeoutMs: number,
-): Promise<void> {
- await new Promise<void>((resolve, reject) => {
-  let settled = false
-  let unsubscribe = (): void => undefined
-  const finish = (error?: Error): void => {
-   if (settled) return
-   settled = true
-   clearTimeout(timer)
-   unsubscribe()
-   if (error === undefined) resolve()
-   else reject(error)
-  }
-  const confirm = (): void => {
-   if (sessions.list.getSnapshot().current === sessionId) finish()
-  }
-  const timer = setTimeout(() => {
-   finish(new Error(`DSH did not select session ${sessionId} within ${timeoutMs} ms`))
-  }, timeoutMs)
-  unsubscribe = sessions.list.subscribe(confirm)
-  try {
-   select()
-   confirm()
-  } catch (cause) {
-   finish(cause instanceof Error ? cause : new Error(String(cause)))
-  }
- })
+ rawParentSessionId: string | undefined,
+): Promise<SessionTarget | undefined> {
+ const state = sessions.list.getSnapshot()
+ if (state.ids.includes(sessionId)) return sessionId
+ // `byId` also carries retained subagent fallback rows, which `ids` omits.
+ if (state.byId[sessionId] !== undefined) return sessionId
+ const known = sessions.subagentAddress(sessionId)
+ if (known !== undefined) return known
+ if (rawParentSessionId === undefined) return undefined
+ await sessions.refreshProjections(rawParentSessionId as SessionId)
+ const refreshed = sessions.subagentAddress(sessionId)
+ if (refreshed !== undefined) return refreshed
+ return sessions.list.getSnapshot().byId[sessionId] === undefined ? undefined : sessionId
 }

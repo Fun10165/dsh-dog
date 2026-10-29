@@ -196,7 +196,7 @@ export function createDogTools(
      const jobId = jobs.start({
       kind: 'dog',
       label: `DoG wait ${String(args.runId).slice(0, 8)}`,
-      ...(exec.agent === undefined ? {} : { owner: exec.agent }),
+      ...(exec.agent === undefined ? {} : { owner: exec.agent.id }),
       run: () => ({
        cancel: (reason?: string) => {
         controller.abort(new Error(reason ?? 'cancelled'))

@@ -42,5 +42,5 @@ export {
  createDogTools,
 } from './dsh/tools.ts'
 export type { DogAgentLauncher, DogSessionFacts } from './dsh/tools.ts'
-export { DOG_SETTINGS_NAMESPACE, DogConfigSchema, installDogSettings } from './dsh/settings.ts'
+export { DogConfigSchema } from './dsh/settings.ts'
 export type { DogConfig } from './dsh/settings.ts'

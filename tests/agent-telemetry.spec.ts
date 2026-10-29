@@ -110,7 +110,11 @@ describe('Agent telemetry projection', () => {
     const waiting = goalAgentTelemetry(
       goalAgentRefs(current, 'leaf')[0]!,
       state,
-      new Map([['child-a' as SessionId, { key: 'q1', kind: 'question', sessionId: 'child-a' as SessionId }]]),
+      new Map([['child-a' as SessionId, {
+        running: true,
+        pendingInteraction: { key: 'q1', kind: 'question', sessionId: 'child-a' as SessionId },
+        completionUnread: false,
+      }]]),
       20_000,
     )
     expect(waiting.needsInput).toBe(true)

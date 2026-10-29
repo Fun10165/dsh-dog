@@ -63,7 +63,7 @@ export function createAgenticRunner(
   if (parent === undefined) {
    throw new Error('verifier delegation requires a live parent Agent (recovered runs without a live parent cannot spawn verification workers)')
   }
-  const started = await subagents.startContinuable({
+  const started = await subagents.startActivation({
    provider: host.provider(),
    label: `verifier ${goalId} · ${runId === undefined ? 'run' : runId.slice(0, 6)}`,
    request: {
@@ -72,6 +72,9 @@ export function createAgenticRunner(
     maxDepth: host.maxDepth(),
    },
    signal,
+   // Verifiers report through their settlement file; a parent notification
+   // would land as a stray turn in the middle of dog_wait.
+   delivery: 'caller',
   })
   const sessionId = started.childId
   activeVerifiers.set(sessionId, { parent, runId: runId ?? '' })
@@ -113,9 +116,9 @@ export function createAgenticRunner(
     // Quiet release: interrupting a finished-but-not-yet-released child
     // emits "Background subagent … was stopped" notifications into the
     // parent session, which interrupt a parent-turn blocked in dog_wait.
-    // drainContinuableChildren releases the Activation/session handle
-    // without that notification storm.
-    await subagents.drainContinuableChildren(parent, [sessionId])
+    // drainChildren releases the Activation/session handle without that
+    // notification storm.
+    await subagents.drainChildren(parent, [sessionId])
     activeVerifiers.delete(sessionId)
     await host.engine().recordVerifierLifecycle(runId, goalId, 'verifier_released', sessionId)
    } catch (releaseError) {
@@ -127,7 +130,7 @@ export function createAgenticRunner(
 
  const delegate: DogAgentLauncher = {
   async launch(input) {
-   const started = await subagents.startContinuable({
+   const started = await subagents.startActivation({
     provider: host.provider(),
     label: input.label,
     request: {
@@ -136,6 +139,9 @@ export function createAgenticRunner(
      maxDepth: host.maxDepth(),
     },
     signal: input.signal,
+    // Delegated development agents report back to the parent like any other
+    // subagent; the run record only observes them.
+    delivery: 'parent',
    })
    return { sessionId: started.childId }
   },

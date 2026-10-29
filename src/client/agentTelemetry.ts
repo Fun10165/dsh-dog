@@ -2,12 +2,12 @@
 
 import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SessionPendingInteractionSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
+import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { DogDebugSnapshot } from '../core/debug.ts'
 import type { DogRun, GoalAgentSessionRef, GoalState } from '../core/model.ts'
 
-/** Sessions awaiting a user answer, keyed by session id. */
-export type PendingInteractions = SessionPendingInteractionSnapshot
+/** Per-session UI status, including the pending interaction each session waits on. */
+export type PendingInteractions = SessionStatusSnapshot
 
 const NO_PENDING_INTERACTIONS: PendingInteractions = new Map()
 
@@ -85,7 +85,7 @@ export function goalAgentTelemetry(
     label: summary?.displayTitle ?? summary?.title ?? `${capitalize(ref.role)} Agent`,
     available: summary !== undefined,
     running: summary?.running ?? false,
-    needsInput: pending.has(ref.sessionId as SessionId),
+    needsInput: pending.get(ref.sessionId as SessionId)?.pendingInteraction !== undefined,
     ...(tokens === undefined ? {} : { tokens }),
     ...(durationMs === undefined ? {} : { durationMs }),
   }

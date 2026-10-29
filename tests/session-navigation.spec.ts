@@ -1,124 +1,104 @@
 import { describe, expect, it, vi } from 'vitest'
-import { openInvocationSession } from '../src/client/sessionNavigation.ts'
+import { loadInvocationSession } from '../src/client/sessionNavigation.ts'
 
-type Navigator = Parameters<typeof openInvocationSession>[0]
-type Select = (sessionId: string) => void
+type Sessions = Parameters<typeof loadInvocationSession>[0]
 
 interface FixtureOptions {
   readonly ids: string[]
-  readonly current?: string
-  readonly onOpen?: (sessionId: string, select: Select) => void
-  readonly onOpenSubagent?: (address: unknown, select: Select) => void
+  readonly byId?: Record<string, unknown>
+  readonly readyRejects?: boolean
   readonly onRefresh?: (parentSessionId: string) => void | Promise<void>
 }
 
-function sessionFixture(options: FixtureOptions): {
-  readonly sessions: Navigator
-  readonly select: Select
+interface SessionFixture {
+  readonly sessions: Sessions
+  readonly setById: (sessionId: string, row: unknown) => void
   readonly setAddress: (sessionId: string, address: unknown) => void
-  readonly open: ReturnType<typeof vi.fn>
-  readonly openSubagent: ReturnType<typeof vi.fn>
-  readonly refreshSubagents: ReturnType<typeof vi.fn>
-} {
-  let snapshot = { ids: options.ids, current: options.current }
-  const listeners = new Set<() => void>()
+  readonly retain: ReturnType<typeof vi.fn>
+  readonly refreshProjections: ReturnType<typeof vi.fn>
+  readonly release: ReturnType<typeof vi.fn>
+}
+
+function sessionFixture(options: FixtureOptions): SessionFixture {
+  const byId: Record<string, unknown> = { ...options.byId }
   const addresses = new Map<string, unknown>()
-  const select: Select = (sessionId) => {
-    snapshot = { ...snapshot, current: sessionId }
-    for (const listener of listeners) listener()
-  }
-  const open = vi.fn((sessionId: string) => options.onOpen?.(sessionId, select))
-  const openSubagent = vi.fn((address: unknown) => options.onOpenSubagent?.(address, select))
-  const refreshSubagents = vi.fn(async (parentSessionId: string) => options.onRefresh?.(parentSessionId))
+  const release = vi.fn()
+  const retain = vi.fn(() => ({
+    sessionId: 'unused',
+    binding: {},
+    ready: options.readyRejects === true
+      ? Promise.reject(new Error('open rejected'))
+      : Promise.resolve({}),
+    release,
+  }))
+  const refreshProjections = vi.fn(async (parentSessionId: string) => options.onRefresh?.(parentSessionId))
   const sessions = {
-    list: {
-      getSnapshot: () => snapshot,
-      subscribe: (listener: () => void) => {
-        listeners.add(listener)
-        return () => listeners.delete(listener)
-      },
-    },
-    open,
-    openSubagent,
+    list: { getSnapshot: () => ({ ids: options.ids, byId }) },
+    retain,
     subagentAddress: (sessionId: string) => addresses.get(sessionId),
-    refreshSubagents,
-  } as unknown as Navigator
+    refreshProjections,
+  } as unknown as Sessions
   return {
     sessions,
-    select,
+    setById: (sessionId, row) => { byId[sessionId] = row },
     setAddress: (sessionId, address) => addresses.set(sessionId, address),
-    open,
-    openSubagent,
-    refreshSubagents,
+    retain,
+    refreshProjections,
+    release,
   }
 }
 
-describe('invocation session navigation', () => {
-  it('does not report success until an ordinary session becomes current', async () => {
-    let release: (() => void) | undefined
-    const fixture = sessionFixture({
-      ids: ['session-old', 'session-target'],
-      current: 'session-old',
-      onOpen: (sessionId, select) => { release = () => select(sessionId) },
-    })
+describe('invocation session loading', () => {
+  it('retains a catalogued session and releases the reference afterwards', async () => {
+    const fixture = sessionFixture({ ids: ['session-target'] })
 
-    let settled = false
-    const opening = openInvocationSession(fixture.sessions, 'session-target', undefined, 100)
-      .finally(() => { settled = true })
-    await Promise.resolve()
-    expect(fixture.open).toHaveBeenCalledWith('session-target')
-    expect(settled).toBe(false)
-
-    release?.()
-    await expect(opening).resolves.toBe(true)
-    expect(settled).toBe(true)
+    await expect(loadInvocationSession(fixture.sessions, 'session-target')).resolves.toBe(true)
+    expect(fixture.retain).toHaveBeenCalledWith('session-target', { source: 'dogDebugger' })
+    expect(fixture.release).toHaveBeenCalledTimes(1)
   })
 
-  it('refreshes the recorded parent before opening an addressed subagent', async () => {
-    const address = { parentSessionId: 'session-parent', childSessionId: 'session-child', mode: 'task' }
-    let fixture: ReturnType<typeof sessionFixture>
-    fixture = sessionFixture({
+  it('resolves a retained subagent fallback row that the catalog ids omit', async () => {
+    const fixture = sessionFixture({
       ids: ['session-parent'],
-      current: 'session-parent',
-      onRefresh: () => fixture.setAddress('session-child', address),
-      onOpenSubagent: (candidate, select) => select((candidate as typeof address).childSessionId),
+      byId: { 'session-child': { id: 'session-child' } },
     })
 
-    await expect(openInvocationSession(
+    await expect(loadInvocationSession(fixture.sessions, 'session-child')).resolves.toBe(true)
+    expect(fixture.retain).toHaveBeenCalledWith('session-child', { source: 'dogDebugger' })
+  })
+
+  it('refreshes the recorded parent before resolving an addressed subagent', async () => {
+    const address = { parentSessionId: 'session-parent', childSessionId: 'session-child', mode: 'task' }
+    let fixture: SessionFixture
+    fixture = sessionFixture({
+      ids: ['session-parent'],
+      onRefresh: () => fixture.setAddress('session-child', address),
+    })
+
+    await expect(loadInvocationSession(
       fixture.sessions,
       'session-child',
       'session-parent',
-      100,
     )).resolves.toBe(true)
-    expect(fixture.refreshSubagents).toHaveBeenCalledWith('session-parent')
-    expect(fixture.openSubagent).toHaveBeenCalledWith(address)
+    expect(fixture.refreshProjections).toHaveBeenCalledWith('session-parent')
+    expect(fixture.retain).toHaveBeenCalledWith(address, { source: 'dogDebugger' })
   })
 
   it('returns false when the persisted session is no longer addressable', async () => {
-    const fixture = sessionFixture({ ids: ['session-other'], current: 'session-other' })
+    const fixture = sessionFixture({ ids: ['session-other'] })
 
-    await expect(openInvocationSession(
+    await expect(loadInvocationSession(
       fixture.sessions,
       'session-missing',
       'session-parent',
-      100,
     )).resolves.toBe(false)
-    expect(fixture.open).not.toHaveBeenCalled()
-    expect(fixture.openSubagent).not.toHaveBeenCalled()
+    expect(fixture.retain).not.toHaveBeenCalled()
   })
 
-  it('fails instead of closing the debugger when DSH never stages the target', async () => {
-    const fixture = sessionFixture({
-      ids: ['session-old', 'session-target'],
-      current: 'session-old',
-      onOpen: () => undefined,
-    })
+  it('returns false and still releases when the initial open rejects', async () => {
+    const fixture = sessionFixture({ ids: ['session-target'], readyRejects: true })
 
-    await expect(openInvocationSession(
-      fixture.sessions,
-      'session-target',
-      undefined,
-      10,
-    )).rejects.toThrow('did not select session session-target')
+    await expect(loadInvocationSession(fixture.sessions, 'session-target')).resolves.toBe(false)
+    expect(fixture.release).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,18 +1,16 @@
 /**
- * DoG deployment configuration: one schema for the composition entry and the
- * user settings section, plus the live source wiring.
+ * DoG deployment configuration: one schema for the composition entry.
  *
- * The schema is declared once and used for both layers — the loader-validated
- * plugin entry (composition `base`) and the `dog` settings namespace the user
- * document overrides. Alpha exposes this through the `ctx.settings` service
- * (`installSection`), not the removed free functions.
+ * Since harness 0.2 the settings service derives a form from each plugin's
+ * declared Config instead of accepting a section injected by the plugin, so
+ * this module only declares the schema. A field change is an ordinary config
+ * once at apply time and a change restarts the plugin; the concurrency knob is
+ * read once per plugin lifetime; editing it restarts the plugin.
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import type { } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 
-/** Host-owned deployment configuration (composition entry and settings base). */
+/** Host-owned deployment configuration (composition entry). */
 export interface DogConfig {
  storageDirectory: string
  /** Verifier workspace root (WorkspaceManager.baseDir): verifiers only read files inside this tree. */
@@ -24,17 +22,14 @@ export interface DogConfig {
  maxExpressionDepth: number
  maxSandboxBytes: number
  allowPartialRoot: boolean
- maxConcurrentVerifications: number
+  maxConcurrentVerifications: number
  revalidateThreshold: number
  gmDigestAlgo: string
  subagentProvider: string
  subagentMaxDepth: number
 }
 
-/** Settings namespace owned by this plugin. */
-export const DOG_SETTINGS_NAMESPACE = 'dog'
-
-/** Loader-validated DoG configuration schema (also the settings namespace schema). */
+/** Loader-validated DoG configuration schema. */
 export const DogConfigSchema: z<DogConfig> = z.object({
  storageDirectory: z.string().default('dog'),
  workspaceRoot: z.string().default('dog/workspace'),
@@ -50,31 +45,3 @@ export const DogConfigSchema: z<DogConfig> = z.object({
  subagentProvider: z.string().default('spawn'),
  subagentMaxDepth: z.natural().default(3),
 })
-
-/**
- * Attach the composition entry as the settings base and hand the caller the
- * live source thunk. The registration is optional: a composition without the
- * settings service keeps using the entry value verbatim.
- *
- * @param ctx - plugin context owning the registration's lifetime.
- * @param entry - loader-validated composition entry (settings base layer).
- * @param onSource - receives a thunk returning the currently authoritative value.
- */
-export function installDogSettings(
- ctx: Context,
- entry: DogConfig,
- onSource: (current: () => DogConfig) => void,
-): void {
- ctx.inject(['settings'], settingsCtx => {
-  settingsCtx.settings.installSection(
-   ctx,
-   DOG_SETTINGS_NAMESPACE,
-   DogConfigSchema,
-   entry,
-   {
-    setSource: onSource,
-    onChange: () => undefined,
-   },
-  )
- })
-}

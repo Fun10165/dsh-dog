@@ -89,14 +89,14 @@ describe('Cordis inject contract', () => {
      },
     })
     host.provide('subagents', {
-     async startContinuable(spec: { request: { prompt: { text: string }[] } }) {
+     async startActivation(spec: { request: { prompt: { text: string }[] } }) {
       startCalls += 1
       const match = /exact absolute path: (\S+?)\.\s/u.exec(spec.request.prompt[0]?.text ?? '')
       settlementPath = match?.[1]
       return { childId: CHILD_ID, messageId: 'stub-message-1' }
      },
      interrupt: () => undefined,
-     drainContinuableChildren: async () => undefined,
+     drainChildren: async () => undefined,
     })
    },
   })

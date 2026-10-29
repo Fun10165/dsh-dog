@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionPendingInteractionSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
+import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { DogDebugGraphRevision, DogDebugSnapshot } from '../core/debug.ts'
 import type {
   BoolExpr,
@@ -49,7 +49,7 @@ export interface DogDebuggerProps {
   readonly openSession: (sessionId: string, parentSessionId?: string) => Promise<boolean>
   readonly getSessionState: () => SessionListState
   readonly subscribeSessions: (listener: () => void) => () => void
-  readonly getPendingInteractions: () => SessionPendingInteractionSnapshot
+  readonly getPendingInteractions: () => SessionStatusSnapshot
   readonly subscribePendingInteractions: (listener: () => void) => () => void
   readonly refreshAgentCatalog: (parentSessionId: string) => Promise<void>
 }
@@ -151,11 +151,13 @@ export function DogDebugger({
     }
   }, [readSnapshot, refreshAgentCatalog])
 
-  const openInvokingSession = useCallback(async (sessionId: string, parentSessionId?: string): Promise<boolean> => {
-    const opened = await openSession(sessionId, parentSessionId)
-    if (opened) setOpen(false)
-    return opened
-  }, [openSession])
+  // Harness 0.2 has no public "switch the main view" call, so a successful
+  // load leaves the debugger open: the session is now retained and opened by
+  // the client, and the view owner decides what to show.
+  const openInvokingSession = useCallback(
+    (sessionId: string, parentSessionId?: string): Promise<boolean> => openSession(sessionId, parentSessionId),
+    [openSession],
+  )
 
   useEffect(() => {
     void refresh()
@@ -518,7 +520,7 @@ interface GraphCanvasProps {
   readonly graph: CompiledGraph
   readonly run: DogRun | undefined
   readonly sessions: SessionListState
-  readonly pending: SessionPendingInteractionSnapshot
+  readonly pending: SessionStatusSnapshot
   readonly selectedNodeId: string | undefined
   readonly zoom: number
   readonly onSelectNode: (id: string) => void
@@ -622,7 +624,7 @@ interface AgentFlyoutProps {
   readonly goalTitle: string
   readonly refs: readonly GoalAgentSessionRef[]
   readonly sessions: SessionListState
-  readonly pending: SessionPendingInteractionSnapshot
+  readonly pending: SessionStatusSnapshot
   readonly style: CSSProperties
   readonly onClose: () => void
   readonly openSession: DogDebuggerProps['openSession']
@@ -637,7 +639,7 @@ function AgentFlyout({ goalTitle, refs, sessions, pending, style, onClose, openS
     setError(undefined)
     try {
       if (!await openSession(ref.sessionId, ref.parentSessionId)) {
-        setError('This Agent session is no longer addressable.')
+        setError('This Agent session could not be loaded.')
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -843,7 +845,7 @@ function RuntimeContextPanel({ run, goalId, readGoalRuntime, openSession }: Runt
     setOpeningSession(true)
     try {
       if (!await openSession(sessionId, parentSessionId)) {
-        setSessionError('The invoking session is no longer available in this client.')
+        setSessionError('The invoking session could not be loaded in this client.')
       }
     } catch (cause) {
       setSessionError(cause instanceof Error ? cause.message : String(cause))
@@ -881,7 +883,7 @@ function RuntimeContextPanel({ run, goalId, readGoalRuntime, openSession }: Runt
           <div className="dog-runtime-session-head">
             <span>Invoking DSH session</span>
             {invocation.agentSessionId === undefined ? null : (
-              <button className="dog-runtime-session-button" type="button" disabled={openingSession} onClick={() => void openInvoker()}>{openingSession ? 'Opening…' : 'Open session'}</button>
+              <button className="dog-runtime-session-button" type="button" disabled={openingSession} onClick={() => void openInvoker()}>{openingSession ? 'Loading…' : 'Load session'}</button>
             )}
           </div>
           <dl className="dog-definition">

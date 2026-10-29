@@ -24,7 +24,7 @@ import type { ProgrammaticRunner, Verdict } from '../core/verifiers.ts'
 import { WorkspaceManager } from '../core/workspace.ts'
 import { createAgenticRunner, type AgenticRunnerHandle } from './agentic.ts'
 import { registerDogDebugRoutes } from './debug.ts'
-import { DogConfigSchema, installDogSettings, type DogConfig } from './settings.ts'
+import { DogConfigSchema, type DogConfig } from './settings.ts'
 import { installInterruptedTurnCapture } from './telemetry.ts'
 import { createDogDelegateAgentTool, createDogTools, type DogSessionFacts } from './tools.ts'
 
@@ -46,12 +46,6 @@ export const Config = DogConfigSchema
 /** Register all DoG tools as Cordis-owned effects so fiber disposal removes them. */
 export async function apply(ctx: Context, config: DogConfig): Promise<void> {
  const schema = await loadSchemaSet()
- let resolved: DogConfig = config
- let settingsCurrent: (() => DogConfig) | undefined
- installDogSettings(ctx, config, current => {
-  settingsCurrent = current
-  resolved = { ...config, ...current() }
- })
  const repository = new DogRepository(dshHomePath(config.storageDirectory), schema)
  // Host boot: cancel runs a previous process left `running` (killed/restarted
  // host) as soon as the plugin loads — before any engine or tool call. Their
@@ -88,25 +82,22 @@ export async function apply(ctx: Context, config: DogConfig): Promise<void> {
  let agenticHandle: AgenticRunnerHandle | undefined
  const getEngine = (): DogEngine => {
   if (dogEngine === undefined) {
-   // settingsCurrent re-reads the live scope: the initial registration may
-   // have resolved before the settings file finished loading (async), which
-   // would otherwise freeze schema defaults (e.g. a relative workspaceRoot).
-   const effective = settingsCurrent === undefined ? resolved : { ...config, ...settingsCurrent() }
+   // The Loader merges profile overrides into the validated entry before apply,
+   // so `config` already is the effective value. A change to an ordinary field
+   // restarts the plugin; the concurrency knob is volatile and read per run.
    dogEngine = new DogEngine({
     config: {
-     ...effective,
-     workspaceRoot: isAbsolute(effective.workspaceRoot) ? effective.workspaceRoot : dshHomePath(effective.workspaceRoot),
-     scriptsDirectory: isAbsolute(effective.scriptsDirectory) ? effective.scriptsDirectory : dshHomePath(effective.scriptsDirectory),
+     ...config,
+     maxConcurrentVerifications: config.maxConcurrentVerifications,
+     workspaceRoot: isAbsolute(config.workspaceRoot) ? config.workspaceRoot : dshHomePath(config.workspaceRoot),
+     scriptsDirectory: isAbsolute(config.scriptsDirectory) ? config.scriptsDirectory : dshHomePath(config.scriptsDirectory),
     },
     programmatic,
     ...(agenticHandle === undefined ? {} : { agentic: agenticHandle.runner }),
     repository,
-    workspaces: new WorkspaceManager({ baseDir: effective.workspaceRoot }),
+    workspaces: new WorkspaceManager({ baseDir: config.workspaceRoot }),
     onRunCancelled: runId => agenticHandle?.interruptRun(runId),
-    liveConfig: () => {
-     const live = settingsCurrent?.()
-     return live === undefined ? {} : { maxConcurrentVerifications: live.maxConcurrentVerifications }
-    },
+    liveConfig: () => ({ maxConcurrentVerifications: config.maxConcurrentVerifications }),
     agentWorkspaceDir: sessionId => ctx.sessions.get(sessionId as SessionId)?.header.cwd,
    })
   }
